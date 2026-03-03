@@ -1,0 +1,6 @@
+Options -Indexes
+
+# Route all requests to api.php for clean URLs
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^(.*)$ api.php [QSA,L]

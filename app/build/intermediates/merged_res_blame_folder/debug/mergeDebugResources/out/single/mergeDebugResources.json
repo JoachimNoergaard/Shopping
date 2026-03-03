@@ -1,0 +1,94 @@
+[
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/drawable_mobilepay.xml.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/drawable/mobilepay.xml"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-xxhdpi_ic_launcher_foreground.webp.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-xxhdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/drawable_ic_mp_blue_mono.xml.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/drawable/ic_mp_blue_mono.xml"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-anydpi-v26/ic_launcher_round.xml"
+    },
+    {
+        "merged": "dk.joachim.shopping.app-debug-54:/drawable_ic_shark_shopper.xml.flat",
+        "source": "dk.joachim.shopping.app-main-56:/drawable/ic_shark_shopper.xml"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-xxhdpi_ic_launcher_round.webp.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-xxhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-xxhdpi_ic_launcher.webp.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-xxhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-xhdpi_ic_launcher_foreground.webp.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-xhdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-xxxhdpi_ic_launcher_round.webp.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-xxxhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/drawable_ic_shoppingbag.xml.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/drawable/ic_shoppingbag.xml"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-xxxhdpi_ic_launcher.webp.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-xxxhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-mdpi_ic_launcher.webp.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-mdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-hdpi_ic_launcher_foreground.webp.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-hdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-anydpi-v26/ic_launcher.xml"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-hdpi_ic_launcher.webp.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-hdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/drawable_ic_shark_shopper.xml.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/drawable/ic_shark_shopper.xml"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-xxxhdpi_ic_launcher_foreground.webp.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-xxxhdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-xhdpi_ic_launcher.webp.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-xhdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-mdpi_ic_launcher_foreground.webp.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-mdpi/ic_launcher_foreground.webp"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-mdpi_ic_launcher_round.webp.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-mdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-hdpi_ic_launcher_round.webp.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-hdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/mipmap-xhdpi_ic_launcher_round.webp.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/mipmap-xhdpi/ic_launcher_round.webp"
+    },
+    {
+        "merged": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-debug-54:/drawable_ic_launcher_background.xml.flat",
+        "source": "/Users/joachim.neve.norgaard/.gradle/daemon/8.9/dk.joachim.shopping.app-main-56:/drawable/ic_launcher_background.xml"
+    }
+]
