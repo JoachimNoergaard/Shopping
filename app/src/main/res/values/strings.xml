@@ -12,4 +12,6 @@
     <string name="categories">Kategorier</string>
     <string name="goods">Varer</string>
     <string name="shops">Butikker</string>
+    <string name="delete_list">Slet liste?</string>
+    <string name="leave_list">Forlad liste?</string>
 </resources>

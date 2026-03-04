@@ -1,8 +1,8 @@
 package dk.joachim.shopping.ui.screens
 
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,12 +48,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -65,6 +62,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import dk.joachim.shopping.R
 import dk.joachim.shopping.data.GroceryList
 
+@Suppress("LongParameterList", "LongMethod", "FunctionNaming")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GroceryListsScreen(
@@ -97,7 +95,8 @@ fun GroceryListsScreen(
                 title = {
                     Text(
                         text = stringResource(R.string.app_name),
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        color = if (isSystemInDarkTheme()) Color.White else Color(LOGO_COLOR)
                     )
                 },
                 navigationIcon = {
@@ -105,7 +104,7 @@ fun GroceryListsScreen(
                         painter = painterResource(R.drawable.ic_shark_shopper),
                         contentDescription = null,
                         colorFilter = ColorFilter.tint(
-                            color = if (isSystemInDarkTheme()) Color.White else Color(0xFF461264),
+                            color = if (isSystemInDarkTheme()) Color.White else Color(LOGO_COLOR),
                             blendMode = BlendMode.SrcIn,
                         ),
                         modifier = Modifier
@@ -212,7 +211,12 @@ fun GroceryListsScreen(
         val isOwner = list.ownerId == uiState.currentProfileId
         AlertDialog(
             onDismissRequest = viewModel::dismissDeleteDialog,
-            title = { Text(if (isOwner) "Slet liste?" else "Forlad liste?") },
+            title = {
+                Text(
+                    if (isOwner) stringResource(R.string.delete_list)
+                    else stringResource(R.string.leave_list)
+                )
+            },
             text = {
                 Text(
                     if (isOwner)
@@ -240,6 +244,7 @@ fun GroceryListsScreen(
     }
 }
 
+@Suppress("FunctionNaming")
 @Composable
 private fun ListCard(
     list: GroceryList,
@@ -298,6 +303,7 @@ private fun ListCard(
     }
 }
 
+@Suppress("FunctionNaming")
 @Composable
 private fun EmptyListsState(modifier: Modifier = Modifier) {
     Column(
@@ -308,7 +314,7 @@ private fun EmptyListsState(modifier: Modifier = Modifier) {
         Icon(
             painter = painterResource(R.drawable.ic_shark_shopper),
             contentDescription = null,
-            tint = if (isSystemInDarkTheme()) Color.White else Color(0xFF461264),
+            tint = if (isSystemInDarkTheme()) Color.White else Color(LOGO_COLOR),
             modifier = Modifier.size(160.dp)
         )
         Spacer(modifier = Modifier.height(16.dp))
@@ -326,6 +332,7 @@ private fun EmptyListsState(modifier: Modifier = Modifier) {
     }
 }
 
+@Suppress("FunctionNaming")
 @Composable
 private fun AddListDialog(
     name: String,
@@ -358,3 +365,5 @@ private fun AddListDialog(
         }
     )
 }
+
+const val LOGO_COLOR = 0xFF461264
