@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -349,7 +350,6 @@ private fun GroceryItemList(
             top = contentPadding.calculateTopPadding() + 8.dp,
             bottom = contentPadding.calculateBottomPadding() + 80.dp
         ),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         // ── Active items grouped by category ──────────────────────────────
         grouped.forEach { (categoryId, categoryItems) ->
@@ -360,10 +360,12 @@ private fun GroceryItemList(
                         ?: if (categoryId.isBlank()) "Uden kategori" else "Andet",
                 )
             }
-            items(categoryItems, key = { it.id }) { item ->
+            itemsIndexed(categoryItems, key = { _, it -> it.id }) { index, item ->
                 GroceryItemCard(
                     item = item,
                     shops = shops,
+                    isFirst = index == 0,
+                    isLast = index == categoryItems.lastIndex,
                     onToggle = { onToggle(item.id) },
                     onDelete = { onDelete(item.id) },
                     onUpdateName = { onUpdateName(item.id, it) },
@@ -381,7 +383,7 @@ private fun GroceryItemList(
                 )
             }
             item(key = "spacer_$categoryId") {
-                Spacer(modifier = Modifier.height(2.dp))
+                Spacer(modifier = Modifier.height(8.dp))
             }
         }
 
@@ -395,10 +397,12 @@ private fun GroceryItemList(
                 )
             }
             if (futureItemsExpanded) {
-                items(futureItems, key = { it.id }) { item ->
+                itemsIndexed(futureItems, key = { _, it -> it.id }) { index, item ->
                     GroceryItemCard(
                         item = item,
                         shops = shops,
+                        isFirst = index == 0,
+                        isLast = index == futureItems.lastIndex,
                         onToggle = { onToggle(item.id) },
                         onDelete = { onDelete(item.id) },
                         onUpdateName = { onUpdateName(item.id, it) },
@@ -424,10 +428,12 @@ private fun GroceryItemList(
                 )
             }
             if (checkedSectionExpanded) {
-                items(checked, key = { it.id }) { item ->
+                itemsIndexed(checked, key = { _, it -> it.id }) { index, item ->
                     GroceryItemCard(
                         item = item,
                         shops = shops,
+                        isFirst = index == 0,
+                        isLast = index == checked.lastIndex,
                         onToggle = { onToggle(item.id) },
                         onDelete = { onDelete(item.id) },
                         onUpdateName = { onUpdateName(item.id, it) },
@@ -561,7 +567,7 @@ private fun CategoryHeader(name: String) {
         style = MaterialTheme.typography.titleSmall,
         fontWeight = FontWeight.SemiBold,
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+        modifier = Modifier.padding(top = 6.dp, bottom = 4.dp)
     )
 }
 
@@ -570,6 +576,8 @@ private fun CategoryHeader(name: String) {
 private fun GroceryItemCard(
     item: GroceryItem,
     shops: List<Shop>,
+    isFirst: Boolean,
+    isLast: Boolean,
     onToggle: () -> Unit,
     onDelete: () -> Unit,
     onUpdateName: (String) -> Unit,
@@ -602,10 +610,18 @@ private fun GroceryItemCard(
     val haptic = LocalHapticFeedback.current
     val contentAlpha = if (item.isChecked) 0.4f else 1f
 
+    val cornerRadius = 12.dp
+    val shape = RoundedCornerShape(
+        topStart = if (isFirst) cornerRadius else 0.dp,
+        topEnd = if (isFirst) cornerRadius else 0.dp,
+        bottomStart = if (isLast) cornerRadius else 0.dp,
+        bottomEnd = if (isLast) cornerRadius else 0.dp,
+    )
+
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (item.isChecked) 0.dp else 2.dp),
+        shape = shape,
+        elevation = CardDefaults.cardElevation(defaultElevation = if (item.isChecked) 0.dp else 0.dp),
         colors = CardDefaults.cardColors(containerColor = backgroundColor)
     ) {
         Row(
@@ -749,6 +765,13 @@ private fun GroceryItemCard(
                 }
             }
         }
+        if (!isLast) {
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                thickness = 0.5.dp,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+        }
     }
 
     if (showDetailsDialog) {
@@ -809,13 +832,16 @@ private fun ItemDetailsDialog(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Rediger vare")
+                Text(
+                    modifier = Modifier.padding(top = 2.dp),
+                    text = "Rediger vare")
                 IconButton(onClick = {
                     val encoded = Uri.encode(item.name)
                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://etilbudsavis.dk/soeg/$encoded"))
                     context.startActivity(intent)
                 }) {
                     Icon(
+                        modifier = Modifier.size(24.dp),
                         painter = painterResource(R.drawable.ic_etilbudsavis),
                         contentDescription = "Søg på eTilbudsavis"
                     )
