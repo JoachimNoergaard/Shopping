@@ -30,6 +30,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -184,7 +185,6 @@ private fun ReorderableShopList(
 
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         shops.forEachIndexed { index, shop ->
             val isDragging = index == draggingIndex
@@ -207,6 +207,8 @@ private fun ReorderableShopList(
             ) {
                 ShopRow(
                     shop = shop,
+                    isFirst = index == 0,
+                    isLast = index == shops.lastIndex,
                     onEdit = { onEdit(shop) },
                     onDelete = { onDelete(shop.id) },
                     dragHandleModifier = Modifier.pointerInput(index) {
@@ -233,14 +235,24 @@ private fun ReorderableShopList(
 @Composable
 private fun ShopRow(
     shop: Shop,
+    isFirst: Boolean,
+    isLast: Boolean,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     dragHandleModifier: Modifier,
 ) {
+    val cornerRadius = 12.dp
+    val shape = RoundedCornerShape(
+        topStart = if (isFirst) cornerRadius else 0.dp,
+        topEnd = if (isFirst) cornerRadius else 0.dp,
+        bottomStart = if (isLast) cornerRadius else 0.dp,
+        bottomEnd = if (isLast) cornerRadius else 0.dp,
+    )
+
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        shape = shape,
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Row(
@@ -257,7 +269,6 @@ private fun ShopRow(
                 modifier = dragHandleModifier.size(24.dp)
             )
 
-            // Preview tag
             Surface(
                 shape = RoundedCornerShape(6.dp),
                 color = shop.backgroundColor.toColor(),
@@ -289,6 +300,13 @@ private fun ShopRow(
                     modifier = Modifier.size(18.dp)
                 )
             }
+        }
+        if (!isLast) {
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                thickness = 0.5.dp,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
         }
     }
 }

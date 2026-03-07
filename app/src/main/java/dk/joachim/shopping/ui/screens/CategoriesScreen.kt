@@ -23,6 +23,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
@@ -140,12 +141,10 @@ private fun ReorderableCategoryList(
 
     Column(
         modifier = modifier.verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         categories.forEachIndexed { index, category ->
             val isDragging = index == draggingIndex
 
-            // Compute how far this non-dragging item should shift to show the drop target
             val draggedTo = draggingIndex?.let { from ->
                 (from + (draggingOffsetY / itemHeightPx).roundToInt())
                     .coerceIn(0, categories.lastIndex)
@@ -167,6 +166,8 @@ private fun ReorderableCategoryList(
             ) {
                 CategoryRow(
                     category = category,
+                    isFirst = index == 0,
+                    isLast = index == categories.lastIndex,
                     onDelete = { onDelete(category.id) },
                     dragHandleModifier = Modifier.pointerInput(index) {
                         detectDragGesturesAfterLongPress(
@@ -194,8 +195,6 @@ private fun ReorderableCategoryList(
                 )
             }
         }
-        // Reserve space at the bottom equal to the total shift so the column
-        // height doesn't visually collapse while dragging
         Spacer(modifier = Modifier.size(80.dp))
     }
 }
@@ -203,13 +202,23 @@ private fun ReorderableCategoryList(
 @Composable
 private fun CategoryRow(
     category: UserCategory,
+    isFirst: Boolean,
+    isLast: Boolean,
     onDelete: () -> Unit,
     dragHandleModifier: Modifier,
 ) {
+    val cornerRadius = 12.dp
+    val shape = RoundedCornerShape(
+        topStart = if (isFirst) cornerRadius else 0.dp,
+        topEnd = if (isFirst) cornerRadius else 0.dp,
+        bottomStart = if (isLast) cornerRadius else 0.dp,
+        bottomEnd = if (isLast) cornerRadius else 0.dp,
+    )
+
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        shape = shape,
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Row(
@@ -219,7 +228,6 @@ private fun CategoryRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Drag handle — long-press to drag
             Icon(
                 imageVector = Icons.Default.DragHandle,
                 contentDescription = "Træk for at sortere",
@@ -241,6 +249,13 @@ private fun CategoryRow(
                     modifier = Modifier.size(18.dp)
                 )
             }
+        }
+        if (!isLast) {
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                thickness = 0.5.dp,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
         }
     }
 }

@@ -932,7 +932,7 @@ private fun ItemDetailsDialog(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Dag",
+                        text = "Dag, hvor tilbuddet starter",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

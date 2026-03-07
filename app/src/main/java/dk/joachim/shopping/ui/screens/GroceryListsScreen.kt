@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -26,6 +26,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -181,15 +182,16 @@ fun GroceryListsScreen(
                     .fillMaxSize()
                     .padding(paddingValues)
                     .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                     top = 8.dp,
                     bottom = 80.dp
                 )
             ) {
-                items(uiState.lists, key = { it.id }) { list ->
+                itemsIndexed(uiState.lists, key = { _, it -> it.id }) { index, list ->
                     ListCard(
                         list = list,
+                        isFirst = index == 0,
+                        isLast = index == uiState.lists.lastIndex,
                         onClick = { onNavigateToList(list.id) },
                         onDelete = { viewModel.requestDeleteList(list) }
                     )
@@ -248,18 +250,28 @@ fun GroceryListsScreen(
 @Composable
 private fun ListCard(
     list: GroceryList,
+    isFirst: Boolean,
+    isLast: Boolean,
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
     val totalItems = list.items.size
     val remaining = list.items.count { !it.isChecked }
 
+    val cornerRadius = 12.dp
+    val shape = RoundedCornerShape(
+        topStart = if (isFirst) cornerRadius else 0.dp,
+        topEnd = if (isFirst) cornerRadius else 0.dp,
+        bottomStart = if (isLast) cornerRadius else 0.dp,
+        bottomEnd = if (isLast) cornerRadius else 0.dp,
+    )
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        shape = shape,
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         )
@@ -299,6 +311,13 @@ private fun ListCard(
                     modifier = Modifier.size(20.dp)
                 )
             }
+        }
+        if (!isLast) {
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                thickness = 0.5.dp,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
         }
     }
 }

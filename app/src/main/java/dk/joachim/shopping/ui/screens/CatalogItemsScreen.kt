@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -29,6 +29,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -123,7 +124,6 @@ fun CatalogItemsScreen(
                     .fillMaxSize()
                     .padding(padding)
                     .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(top = 8.dp, bottom = 88.dp)
             ) {
                 groups.forEach { (category, groupItems) ->
@@ -138,9 +138,11 @@ fun CatalogItemsScreen(
                                 .padding(top = 12.dp, bottom = 4.dp)
                         )
                     }
-                    items(groupItems, key = { it.id }) { item ->
+                    itemsIndexed(groupItems, key = { _, it -> it.id }) { index, item ->
                         SwipableCatalogCard(
                             item = item,
+                            isFirst = index == 0,
+                            isLast = index == groupItems.lastIndex,
                             categoryName = null,
                             onClick = { viewModel.startEdit(item) },
                             onDelete = { viewModel.deleteItem(item.id) }
@@ -184,6 +186,8 @@ fun CatalogItemsScreen(
 @Composable
 private fun SwipableCatalogCard(
     item: CatalogItem,
+    isFirst: Boolean,
+    isLast: Boolean,
     categoryName: String?,
     onClick: () -> Unit,
     onDelete: () -> Unit,
@@ -234,6 +238,8 @@ private fun SwipableCatalogCard(
         ) {
             CatalogItemCard(
                 item = item,
+                isFirst = isFirst,
+                isLast = isLast,
                 categoryName = categoryName,
                 onClick = onClick,
                 onDelete = onDelete,
@@ -245,16 +251,26 @@ private fun SwipableCatalogCard(
 @Composable
 private fun CatalogItemCard(
     item: CatalogItem,
+    isFirst: Boolean,
+    isLast: Boolean,
     categoryName: String?,
     onClick: () -> Unit,
     onDelete: () -> Unit,
 ) {
+    val cornerRadius = 12.dp
+    val shape = RoundedCornerShape(
+        topStart = if (isFirst) cornerRadius else 0.dp,
+        topEnd = if (isFirst) cornerRadius else 0.dp,
+        bottomStart = if (isLast) cornerRadius else 0.dp,
+        bottomEnd = if (isLast) cornerRadius else 0.dp,
+    )
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        shape = shape,
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Row(
@@ -278,6 +294,13 @@ private fun CatalogItemCard(
                     modifier = Modifier.size(18.dp)
                 )
             }
+        }
+        if (!isLast) {
+            HorizontalDivider(
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                thickness = 0.5.dp,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
         }
     }
 }
