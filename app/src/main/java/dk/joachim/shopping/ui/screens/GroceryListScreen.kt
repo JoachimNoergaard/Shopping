@@ -1,7 +1,9 @@
 package dk.joachim.shopping.ui.screens
 
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -45,6 +47,7 @@ import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Store
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -78,6 +81,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -112,6 +116,7 @@ import dk.joachim.shopping.data.WEEKDAYS
 import dk.joachim.shopping.data.dateToWeekdayAbbr
 import dk.joachim.shopping.data.isFutureWeekday
 import dk.joachim.shopping.data.weekdayNameToNextDate
+import kotlinx.coroutines.flow.first
 
 private fun String.toColor(): Color = try {
     Color(this.toColorInt())
@@ -185,6 +190,7 @@ fun GroceryListScreen(
                                 onDismissRequest = { overflowExpanded = false }
                             ) {
                                 listOf(
+                                    "eTilbudsavis" to "https://etilbudsavis.dk/soeg",
                                     "Rema 1000" to "https://rema1000.dk/avis",
                                     "365 Discount" to "https://365discount.coop.dk/365avis/",
                                     "Netto" to "https://netto.dk/netto-avisen",
@@ -195,9 +201,13 @@ fun GroceryListScreen(
                                         text = { Text(label) },
                                         onClick = {
                                             overflowExpanded = false
-                                            context.startActivity(
-                                                Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                            )
+                                            try {
+                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                                    .addCategory(Intent.CATEGORY_BROWSABLE)
+                                                context.startActivity(intent)
+                                            } catch (_: ActivityNotFoundException) {
+                                                Toast.makeText(context, "$label er ikke installeret", Toast.LENGTH_SHORT).show()
+                                            }
                                         }
                                     )
                                 }
@@ -307,6 +317,7 @@ private fun GroceryItemList(
 
     var checkedSectionExpanded by rememberSaveable { mutableStateOf(false) }
     var futureItemsExpanded by rememberSaveable { mutableStateOf(false) }
+    var scrollToFutureItemId by remember { mutableStateOf<String?>(null) }
 
     val listState = remember { LazyListState() }
     LaunchedEffect(initialSyncDone) {
@@ -314,6 +325,19 @@ private fun GroceryItemList(
     }
     LaunchedEffect(itemAddedCount) {
         if (itemAddedCount > 0) listState.animateScrollToItem(0)
+    }
+
+    LaunchedEffect(scrollToFutureItemId, futureItems) {
+        val targetId = scrollToFutureItemId ?: return@LaunchedEffect
+        val targetIndexInFuture = futureItems.indexOfFirst { it.id == targetId }
+        if (targetIndexInFuture < 0) return@LaunchedEffect
+        futureItemsExpanded = true
+        val futureHeaderIndex = grouped.entries.sumOf { 2 + it.value.size }
+        val targetIndex = futureHeaderIndex + 1 + targetIndexInFuture
+        snapshotFlow { listState.layoutInfo.totalItemsCount }
+            .first { it > targetIndex }
+        listState.animateScrollToItem(targetIndex)
+        scrollToFutureItemId = null
     }
 
     LazyColumn(
@@ -343,7 +367,12 @@ private fun GroceryItemList(
                     onToggle = { onToggle(item.id) },
                     onDelete = { onDelete(item.id) },
                     onUpdateName = { onUpdateName(item.id, it) },
-                    onUpdateWeekday = { onUpdateWeekday(item.id, it) },
+                    onUpdateWeekday = { weekday ->
+                        onUpdateWeekday(item.id, weekday)
+                        if (weekday != null && isFutureWeekday(weekday)) {
+                            scrollToFutureItemId = item.id
+                        }
+                    },
                     onUpdatePrice = { onUpdatePrice(item.id, it) },
                     onUpdateSupermarket = { onUpdateSupermarket(item.id, it) },
                     onAdjustQuantity = { onAdjustQuantity(item.id, it) },
@@ -402,7 +431,12 @@ private fun GroceryItemList(
                         onToggle = { onToggle(item.id) },
                         onDelete = { onDelete(item.id) },
                         onUpdateName = { onUpdateName(item.id, it) },
-                        onUpdateWeekday = { onUpdateWeekday(item.id, it) },
+                        onUpdateWeekday = { weekday ->
+                            onUpdateWeekday(item.id, weekday)
+                            if (weekday != null && isFutureWeekday(weekday)) {
+                                scrollToFutureItemId = item.id
+                            }
+                        },
                         onUpdatePrice = { onUpdatePrice(item.id, it) },
                         onUpdateSupermarket = { onUpdateSupermarket(item.id, it) },
                         onAdjustQuantity = { onAdjustQuantity(item.id, it) },
@@ -765,9 +799,29 @@ private fun ItemDetailsDialog(
         onDismiss()
     }
 
+    val context = LocalContext.current
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Rediger vare") },
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Rediger vare")
+                IconButton(onClick = {
+                    val encoded = Uri.encode(item.name)
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://etilbudsavis.dk/soeg/$encoded"))
+                    context.startActivity(intent)
+                }) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_etilbudsavis),
+                        contentDescription = "Søg på eTilbudsavis"
+                    )
+                }
+            }
+        },
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
