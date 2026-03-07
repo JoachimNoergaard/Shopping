@@ -27,6 +27,7 @@ data class GroceryListUiState(
     val catalogItems: List<CatalogItem> = emptyList(),
     val shops: List<Shop> = emptyList(),
     val itemAddedCount: Int = 0,
+    val initialSyncDone: Boolean = false,
 )
 
 class GroceryListViewModel(savedStateHandle: SavedStateHandle) : ViewModel() {
@@ -35,6 +36,7 @@ class GroceryListViewModel(savedStateHandle: SavedStateHandle) : ViewModel() {
     private val repository = ShoppingRepository
 
     private val _userCategories = MutableStateFlow<List<UserCategory>>(emptyList())
+    private val _initialSyncDone = MutableStateFlow(false)
 
     init {
         viewModelScope.launch {
@@ -43,9 +45,9 @@ class GroceryListViewModel(savedStateHandle: SavedStateHandle) : ViewModel() {
         viewModelScope.launch {
             repository.purgeExpiredCheckedItems(listId)
         }
-        // Poll the server every 5 s while this list is open so changes
-        // from other users appear in near-real-time.
         viewModelScope.launch {
+            repository.syncList(listId)
+            _initialSyncDone.value = true
             while (true) {
                 delay(POLL_INTERVAL_MS)
                 repository.syncList(listId)
@@ -67,8 +69,9 @@ class GroceryListViewModel(savedStateHandle: SavedStateHandle) : ViewModel() {
         _dialog,
         _userCategories,
         repository.catalogItems,
-        repository.shops,
-    ) { lists, dialog, categories, catalog, shops ->
+        combine(repository.shops, _initialSyncDone) { s, d -> s to d },
+    ) { lists, dialog, categories, catalog, shopsAndSync ->
+        val (shops, syncDone) = shopsAndSync
         GroceryListUiState(
             list = lists.find { it.id == listId },
             showAddItemDialog = dialog.show,
@@ -79,6 +82,7 @@ class GroceryListViewModel(savedStateHandle: SavedStateHandle) : ViewModel() {
             catalogItems = catalog,
             shops = shops,
             itemAddedCount = dialog.itemAddedCount,
+            initialSyncDone = syncDone,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), GroceryListUiState())
 

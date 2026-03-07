@@ -6,12 +6,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,14 +25,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -44,12 +46,12 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Store
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -64,13 +66,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -85,11 +84,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -110,13 +109,17 @@ import dk.joachim.shopping.data.GroceryItem
 import dk.joachim.shopping.data.Shop
 import dk.joachim.shopping.data.UserCategory
 import dk.joachim.shopping.data.WEEKDAYS
+import dk.joachim.shopping.data.dateToWeekdayAbbr
+import dk.joachim.shopping.data.isFutureWeekday
+import dk.joachim.shopping.data.weekdayNameToNextDate
 
 private fun String.toColor(): Color = try {
     Color(this.toColorInt())
-} catch (e: Exception) {
+} catch (_: Exception) {
     Color.Gray
 }
 
+@Suppress("FunctionNaming")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GroceryListScreen(
@@ -126,7 +129,7 @@ fun GroceryListScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val list = uiState.list
     val items = list?.items ?: emptyList()
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val context = LocalContext.current
     BackHandler { onNavigateBack() }
 
@@ -147,7 +150,7 @@ fun GroceryListScreen(
                 navigationIcon = {
                     IconButton(onClick = onNavigateBack) {
                         Icon(
-                            imageVector = Icons.Default.ArrowBack,
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = "Tilbage",
                             tint = MaterialTheme.colorScheme.onSurface
                         )
@@ -192,11 +195,9 @@ fun GroceryListScreen(
                                         text = { Text(label) },
                                         onClick = {
                                             overflowExpanded = false
-                                            if (url != null) {
-                                                context.startActivity(
-                                                    Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                                )
-                                            }
+                                            context.startActivity(
+                                                Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                            )
                                         }
                                     )
                                 }
@@ -205,13 +206,12 @@ fun GroceryListScreen(
                     }
                 },
                 scrollBehavior = scrollBehavior,
-                colors = TopAppBarDefaults.largeTopAppBarColors(
+                colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                     scrolledContainerColor = MaterialTheme.colorScheme.background
                 )
             )
-        },
-        floatingActionButton = {
+        },        floatingActionButton = {
             FloatingActionButton(
                 onClick = viewModel::showAddItemDialog,
                 containerColor = MaterialTheme.colorScheme.primary
@@ -231,6 +231,8 @@ fun GroceryListScreen(
                 items = items,
                 userCategories = uiState.userCategories,
                 shops = uiState.shops,
+                itemAddedCount = uiState.itemAddedCount,
+                initialSyncDone = uiState.initialSyncDone,
                 onToggle = viewModel::toggleItem,
                 onDelete = viewModel::deleteItem,
                 onRemoveAllChecked = viewModel::deleteCheckedItems,
@@ -272,6 +274,8 @@ private fun GroceryItemList(
     items: List<GroceryItem>,
     userCategories: List<UserCategory>,
     shops: List<Shop>,
+    itemAddedCount: Int,
+    initialSyncDone: Boolean,
     onToggle: (String) -> Unit,
     onDelete: (String) -> Unit,
     onRemoveAllChecked: () -> Unit,
@@ -287,19 +291,33 @@ private fun GroceryItemList(
     val unchecked = items.filter { !it.isChecked }
     val checked = items.filter { it.isChecked }.sortedByDescending { it.checkedAt }
 
+    val futureItems = unchecked.filter { it.weekday != null && isFutureWeekday(it.weekday) }
+    val currentItems = unchecked.filter { it.weekday == null || !isFutureWeekday(it.weekday) }
+
     // Build an order map: categoryId → position. Unknown IDs sort to the end.
     val categoryOrder = userCategories.mapIndexed { i, c -> c.id to i }.toMap()
     val categoryMap = userCategories.associateBy { it.id }
-    val grouped: Map<String, List<GroceryItem>> = unchecked
-        .sortedWith(compareBy(
+    val grouped: Map<String, List<GroceryItem>> = currentItems
+        .sortedWith(
+            compareBy(
             { categoryOrder[it.category] ?: Int.MAX_VALUE },
             { it.name }
         ))
         .groupBy { it.category }
 
     var checkedSectionExpanded by rememberSaveable { mutableStateOf(false) }
+    var futureItemsExpanded by rememberSaveable { mutableStateOf(false) }
+
+    val listState = remember { LazyListState() }
+    LaunchedEffect(initialSyncDone) {
+        if (initialSyncDone) listState.scrollToItem(0)
+    }
+    LaunchedEffect(itemAddedCount) {
+        if (itemAddedCount > 0) listState.animateScrollToItem(0)
+    }
 
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(
             start = 16.dp,
@@ -314,11 +332,12 @@ private fun GroceryItemList(
             val userCategory = categoryMap[categoryId]
             item(key = "header_$categoryId") {
                 CategoryHeader(
-                    name = userCategory?.name ?: if (categoryId.isBlank()) "Uden kategori" else "Andet",
+                    name = userCategory?.name
+                        ?: if (categoryId.isBlank()) "Uden kategori" else "Andet",
                 )
             }
             items(categoryItems, key = { it.id }) { item ->
-                SwipableGroceryItem(
+                GroceryItemCard(
                     item = item,
                     shops = shops,
                     onToggle = { onToggle(item.id) },
@@ -337,6 +356,34 @@ private fun GroceryItemList(
             }
         }
 
+        // ── Future items section ──────────────────────────────────────────
+        if (futureItems.isNotEmpty()) {
+            item(key = "future_header") {
+                FutureSectionHeader(
+                    count = futureItems.size,
+                    expanded = futureItemsExpanded,
+                    onToggleExpanded = { futureItemsExpanded = !futureItemsExpanded }
+                )
+            }
+            if (futureItemsExpanded) {
+                items(futureItems, key = { it.id }) { item ->
+                    GroceryItemCard(
+                        item = item,
+                        shops = shops,
+                        onToggle = { onToggle(item.id) },
+                        onDelete = { onDelete(item.id) },
+                        onUpdateName = { onUpdateName(item.id, it) },
+                        onUpdateWeekday = { onUpdateWeekday(item.id, it) },
+                        onUpdatePrice = { onUpdatePrice(item.id, it) },
+                        onUpdateSupermarket = { onUpdateSupermarket(item.id, it) },
+                        onAdjustQuantity = { onAdjustQuantity(item.id, it) },
+                        onSetQuantity = { onSetQuantity(item.id, it) },
+                        onUpdateComment = { onUpdateComment(item.id, it) },
+                    )
+                }
+            }
+        }
+
         // ── Checked / completed section ───────────────────────────────────
         if (checked.isNotEmpty()) {
             item(key = "checked_header") {
@@ -349,7 +396,7 @@ private fun GroceryItemList(
             }
             if (checkedSectionExpanded) {
                 items(checked, key = { it.id }) { item ->
-                    SwipableGroceryItem(
+                    GroceryItemCard(
                         item = item,
                         shops = shops,
                         onToggle = { onToggle(item.id) },
@@ -382,7 +429,7 @@ private fun CompletedSectionHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 12.dp, bottom = 4.dp),
+            .padding(top = 6.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         HorizontalDivider(
@@ -394,7 +441,7 @@ private fun CompletedSectionHeader(
             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
         ) {
             Text(
-                text = "Completed ($count)",
+                text = "Afkrydset ($count)",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -428,6 +475,52 @@ private fun CompletedSectionHeader(
 }
 
 @Composable
+private fun FutureSectionHeader(
+    count: Int,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
+) {
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 0f else -90f,
+        label = "future_chevron"
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.outlineVariant
+        )
+        TextButton(
+            onClick = onToggleExpanded,
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+        ) {
+            Text(
+                text = if (expanded) "Skjul kommende varer" else "Du har $count kommende varer",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(
+                imageVector = Icons.Default.ExpandMore,
+                contentDescription = if (expanded) "Skjul" else "Vis",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .size(16.dp)
+                    .rotate(chevronRotation)
+            )
+        }
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.outlineVariant
+        )
+    }
+}
+
+@Composable
 private fun CategoryHeader(name: String) {
     Text(
         text = name,
@@ -438,83 +531,7 @@ private fun CategoryHeader(name: String) {
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SwipableGroceryItem(
-    item: GroceryItem,
-    shops: List<Shop>,
-    onToggle: () -> Unit,
-    onDelete: () -> Unit,
-    onUpdateName: (String) -> Unit,
-    onUpdateWeekday: (String?) -> Unit,
-    onUpdatePrice: (String?) -> Unit,
-    onUpdateSupermarket: (String?) -> Unit,
-    onAdjustQuantity: (Int) -> Unit,
-    onSetQuantity: (String) -> Unit,
-    onUpdateComment: (String?) -> Unit,
-) {
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            if (value == SwipeToDismissBoxValue.EndToStart) {
-                onToggle()
-            }
-            false // always snap back — item stays in list
-        }
-    )
-
-    SwipeToDismissBox(
-        state = dismissState,
-        enableDismissFromStartToEnd = false,
-        backgroundContent = {
-            val triggered = dismissState.targetValue == SwipeToDismissBoxValue.EndToStart
-            val color by animateColorAsState(
-                targetValue = if (triggered)
-                    if (item.isChecked) MaterialTheme.colorScheme.surfaceVariant
-                    else MaterialTheme.colorScheme.primaryContainer
-                else Color.Transparent,
-                label = "swipe_bg"
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(color),
-                contentAlignment = Alignment.CenterEnd
-            ) {
-                val iconAlpha by animateFloatAsState(
-                    targetValue = if (triggered) 1f else 0f,
-                    label = "swipe_icon_alpha"
-                )
-                Icon(
-                    imageVector = if (item.isChecked) Icons.Default.Close else Icons.Default.CheckCircle,
-                    contentDescription = if (item.isChecked) "Uncheck" else "Complete",
-                    tint = if (item.isChecked)
-                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = iconAlpha)
-                    else
-                        MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = iconAlpha),
-                    modifier = Modifier.padding(end = 16.dp)
-                )
-            }
-        }
-    ) {
-        GroceryItemCard(
-            item = item,
-            shops = shops,
-            onToggle = onToggle,
-            onDelete = onDelete,
-            onUpdateName = onUpdateName,
-            onUpdateWeekday = onUpdateWeekday,
-            onUpdatePrice = onUpdatePrice,
-            onUpdateSupermarket = onUpdateSupermarket,
-            onAdjustQuantity = onAdjustQuantity,
-            onSetQuantity = onSetQuantity,
-            onUpdateComment = onUpdateComment,
-        )
-    }
-}
-
-
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun GroceryItemCard(
     item: GroceryItem,
@@ -548,6 +565,7 @@ private fun GroceryItemCard(
         label = "card_bg"
     )
 
+    val haptic = LocalHapticFeedback.current
     val contentAlpha = if (item.isChecked) 0.4f else 1f
 
     Card(
@@ -559,12 +577,18 @@ private fun GroceryItemCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable {
-                    if (!item.isChecked) {
-                        showQuantityControls = !showQuantityControls
-                        if (showQuantityControls) interactionTick++
+                .combinedClickable(
+                    onClick = {
+                        if (!item.isChecked) {
+                            showQuantityControls = !showQuantityControls
+                            if (showQuantityControls) interactionTick++
+                        }
+                    },
+                    onLongClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onToggle()
                     }
-                }
+                )
                 .padding(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -599,8 +623,14 @@ private fun GroceryItemCard(
                     }
                     item.weekday?.let { day ->
                         DetailPill(
-                            icon = { Icon(Icons.Default.CalendarToday, null, modifier = Modifier.size(10.dp)) },
-                            label = day,
+                            icon = {
+                                Icon(
+                                    Icons.Default.CalendarToday,
+                                    null,
+                                    modifier = Modifier.size(10.dp)
+                                )
+                            },
+                            label = dateToWeekdayAbbr(day),
                             alpha = contentAlpha,
                             backgroundColor = backgroundColor,
                             textStyle = MaterialTheme.typography.labelMedium,
@@ -617,7 +647,13 @@ private fun GroceryItemCard(
                     }
                     item.comment?.let { comment ->
                         DetailPill(
-                            icon = { Icon(Icons.Default.Notes, null, modifier = Modifier.size(10.dp)) },
+                            icon = {
+                                Icon(
+                                    Icons.Default.Notes,
+                                    null,
+                                    modifier = Modifier.size(10.dp)
+                                )
+                            },
                             label = comment,
                             alpha = contentAlpha,
                             backgroundColor = backgroundColor,
@@ -715,10 +751,19 @@ private fun ItemDetailsDialog(
     var quantityText by remember { mutableStateOf(item.quantity) }
     var priceText by remember { mutableStateOf(item.price ?: "") }
     var commentText by remember { mutableStateOf(item.comment ?: "") }
+    var pendingWeekday by remember { mutableStateOf(item.weekday) }
+    var pendingSupermarket by remember { mutableStateOf(item.supermarket) }
     var supermarketDropdownExpanded by remember { mutableStateOf(false) }
 
-    // Keep quantity text in sync when +/- buttons update it via the item
-    LaunchedEffect(item.quantity) { quantityText = item.quantity }
+    fun commit() {
+        if (nameText.isNotBlank()) onUpdateName(nameText)
+        onSetQuantity(quantityText)
+        onUpdateWeekday(pendingWeekday)
+        onUpdatePrice(priceText.ifBlank { null })
+        onUpdateComment(commentText.ifBlank { null })
+        onUpdateSupermarket(pendingSupermarket)
+        onDismiss()
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -734,11 +779,14 @@ private fun ItemDetailsDialog(
                     value = nameText,
                     onValueChange = { value ->
                         nameText = value
-                        if (value.isNotBlank()) onUpdateName(value)
                     },
                     label = { Text("Navn") },
                     leadingIcon = {
-                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(
+                            Icons.Default.Edit,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
                     },
                     trailingIcon = {
                         if (nameText.isNotEmpty()) {
@@ -761,14 +809,11 @@ private fun ItemDetailsDialog(
                 val qty = quantityText.trimStart().takeWhile { it.isDigit() }.toIntOrNull() ?: 1
                 OutlinedTextField(
                     value = quantityText,
-                    onValueChange = { value ->
-                        quantityText = value
-                        onSetQuantity(value)
-                    },
+                    onValueChange = { value -> quantityText = value },
                     label = { Text("Mængde") },
                     leadingIcon = {
                         IconButton(
-                            onClick = { onAdjustQuantity(-1) },
+                            onClick = { if (qty > 1) quantityText = (qty - 1).toString() },
                             enabled = qty > 1
                         ) {
                             Icon(
@@ -779,7 +824,7 @@ private fun ItemDetailsDialog(
                         }
                     },
                     trailingIcon = {
-                        IconButton(onClick = { onAdjustQuantity(1) }) {
+                        IconButton(onClick = { quantityText = (qty + 1).toString() }) {
                             Icon(
                                 imageVector = Icons.Default.Add,
                                 contentDescription = "Increase quantity",
@@ -814,7 +859,7 @@ private fun ItemDetailsDialog(
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     WEEKDAYS.forEach { day ->
-                        val selected = item.weekday == day
+                        val selected = pendingWeekday?.let { dateToWeekdayAbbr(it) } == day
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier
@@ -824,7 +869,10 @@ private fun ItemDetailsDialog(
                                     if (selected) MaterialTheme.colorScheme.primaryContainer
                                     else MaterialTheme.colorScheme.surfaceVariant
                                 )
-                                .clickable { onUpdateWeekday(if (selected) null else day) }
+                                .clickable {
+                                    pendingWeekday =
+                                        if (selected) null else weekdayNameToNextDate(day)
+                                }
                         ) {
                             Text(
                                 text = day.take(1),
@@ -844,11 +892,14 @@ private fun ItemDetailsDialog(
                     value = commentText,
                     onValueChange = { value ->
                         commentText = value
-                        onUpdateComment(value.ifBlank { null })
                     },
                     label = { Text("Kommentar") },
                     leadingIcon = {
-                        Icon(Icons.Default.Notes, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(
+                            Icons.Default.Notes,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
                     },
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     minLines = 1,
@@ -867,84 +918,91 @@ private fun ItemDetailsDialog(
                     onExpandedChange = { supermarketDropdownExpanded = it },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                        val selectedShop = shops.firstOrNull { it.id == item.supermarket }
-                        OutlinedTextField(
-                            value = selectedShop?.name ?: (item.supermarket ?: ""),
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Butik") },
-                            leadingIcon = {
-                                Icon(Icons.Default.Store, contentDescription = null, modifier = Modifier.size(18.dp))
-                            },
-                            trailingIcon = {
-                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = supermarketDropdownExpanded)
-                            },
-                            singleLine = true,
-                            textStyle = MaterialTheme.typography.bodyMedium,
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .menuAnchor()
-                        )
-                        ExposedDropdownMenu(
-                            expanded = supermarketDropdownExpanded,
-                            onDismissRequest = { supermarketDropdownExpanded = false }
-                        ) {
-                            if (item.supermarket != null) {
-                                DropdownMenuItem(
-                                    text = { Text("— Ryd", color = MaterialTheme.colorScheme.error) },
-                                    onClick = {
-                                        onUpdateSupermarket(null)
-                                        supermarketDropdownExpanded = false
-                                    }
-                                )
-                            }
-                            shops.forEach { shop ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(12.dp)
-                                                    .clip(androidx.compose.foundation.shape.CircleShape)
-                                                    .background(shop.backgroundColor.toColor())
-                                            )
-                                            Text(shop.name)
-                                        }
-                                    },
-                                    onClick = {
-                                        onUpdateSupermarket(shop.id)
-                                        supermarketDropdownExpanded = false
-                                    },
-                                    trailingIcon = if (item.supermarket == shop.id) ({
-                                        Icon(
-                                            Icons.Default.Store,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(16.dp)
+                    val selectedShop = shops.firstOrNull { it.id == pendingSupermarket }
+                    OutlinedTextField(
+                        value = selectedShop?.name ?: (pendingSupermarket ?: ""),
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Butik") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Store,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = supermarketDropdownExpanded)
+                        },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = supermarketDropdownExpanded,
+                        onDismissRequest = { supermarketDropdownExpanded = false }
+                    ) {
+                        if (pendingSupermarket != null) {
+                            DropdownMenuItem(
+                                text = { Text("— Ryd", color = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    pendingSupermarket = null
+                                    supermarketDropdownExpanded = false
+                                }
+                            )
+                        }
+                        shops.forEach { shop ->
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(12.dp)
+                                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                                .background(shop.backgroundColor.toColor())
                                         )
-                                    }) else null
-                                )
-                            }
+                                        Text(shop.name)
+                                    }
+                                },
+                                onClick = {
+                                    pendingSupermarket = shop.id
+                                    supermarketDropdownExpanded = false
+                                },
+                                trailingIcon = if (pendingSupermarket == shop.id) ({
+                                    Icon(
+                                        Icons.Default.Store,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }) else null
+                            )
                         }
                     }
+                }
 
                 // ── Price ─────────────────────────────────────────────────
                 OutlinedTextField(
                     value = priceText,
                     onValueChange = { value ->
                         priceText = value
-                        onUpdatePrice(value.ifBlank { null })
                     },
                     label = { Text("Pris") },
                     leadingIcon = {
-                        Icon(Icons.Default.LocalOffer, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(
+                            Icons.Default.LocalOffer,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
                     },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
@@ -958,7 +1016,7 @@ private fun ItemDetailsDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Færdig") }
+            TextButton(onClick = ::commit) { Text("Færdig") }
         }
     )
 }
@@ -1010,7 +1068,7 @@ private fun EmptyState(modifier: Modifier = Modifier) {
         Icon(
             painter = painterResource(R.drawable.ic_shark_shopper),
             contentDescription = null,
-            tint =if (isSystemInDarkTheme()) Color.White else Color(0xFF461264),
+            tint = if (isSystemInDarkTheme()) Color.White else Color(0xFF461264),
             modifier = Modifier.size(160.dp)
         )
         Spacer(modifier = Modifier.height(16.dp))
@@ -1059,7 +1117,13 @@ private fun AddGroceryItemDialog(
 
     // Catalog items matching the typed name are shown first.
     // Items from the current list that aren't in the catalog fill the remainder.
-    data class Suggestion(val name: String, val categoryId: String, val fromCatalog: Boolean, val source: Any)
+    data class Suggestion(
+        val name: String,
+        val categoryId: String,
+        val fromCatalog: Boolean,
+        val source: Any
+    )
+
     val suggestions = remember(name, catalogItems, existingItems) {
         if (name.isBlank()) emptyList()
         else {
@@ -1068,7 +1132,12 @@ private fun AddGroceryItemDialog(
                 .map { Suggestion(it.name, it.category, true, it) }
             val catalogNames = catalogMatches.map { it.name.lowercase() }.toSet()
             val listMatches = existingItems
-                .filter { it.name.contains(name.trim(), ignoreCase = true) && it.name.lowercase() !in catalogNames }
+                .filter {
+                    it.name.contains(
+                        name.trim(),
+                        ignoreCase = true
+                    ) && it.name.lowercase() !in catalogNames
+                }
                 .distinctBy { it.name }
                 .map { Suggestion(it.name, it.category, false, it) }
             (catalogMatches + listMatches).take(6)
@@ -1186,7 +1255,9 @@ private fun AddGroceryItemDialog(
                 // ── Category ──────────────────────────────────────────────
                 ExposedDropdownMenuBox(
                     expanded = categoryExpanded,
-                    onExpandedChange = { categoryExpanded = if (userCategories.isNotEmpty()) it else false }
+                    onExpandedChange = {
+                        categoryExpanded = if (userCategories.isNotEmpty()) it else false
+                    }
                 ) {
                     OutlinedTextField(
                         value = category?.name ?: "",

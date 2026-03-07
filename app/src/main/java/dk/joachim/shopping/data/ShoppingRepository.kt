@@ -12,15 +12,35 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 private const val PREFS_NAME = "shopping_prefs"
 private const val KEY_LISTS = "lists"
 const val KEY_LAST_LIST_ID = "last_list_id"
 private const val KEY_PROFILE_ID = "profile_id"
 private const val KEY_ONBOARDING_DONE = "onboarding_done"
+private const val KEY_CATEGORIES = "categories"
+private const val KEY_PENDING_MUTATIONS = "pending_mutations"
+// How long (ms) to suppress server sync after a local write, giving the server
+// time to process the push before we pull again.
+private const val SYNC_COOLDOWN_MS = 10_000L
+
+@Serializable
+private data class PendingMutation(
+    val type: String,
+    val listId: String,
+    val itemId: String,
+    val item: GroceryItem? = null,
+) {
+    companion object {
+        const val UPSERT = "upsert"
+        const val DELETE = "delete"
+    }
+}
 
 object ShoppingRepository {
 
@@ -29,6 +49,13 @@ object ShoppingRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = Json { ignoreUnknownKeys = true }
     private lateinit var prefs: SharedPreferences
+
+    // Tracks the last time a local mutation was made so syncList can hold off
+    // long enough for the server to process the write before pulling again.
+    private val lastMutationAt = AtomicLong(0L)
+    private fun recordMutation() = lastMutationAt.set(System.currentTimeMillis())
+
+    private val mutationQueueLock = Any()
 
     private val _lists = MutableStateFlow<List<GroceryList>>(emptyList())
     val lists: StateFlow<List<GroceryList>> = _lists.asStateFlow()
@@ -57,6 +84,79 @@ object ShoppingRepository {
 
     private fun saveLists(lists: List<GroceryList>) {
         prefs.edit().putString(KEY_LISTS, json.encodeToString(lists)).apply()
+    }
+
+    // ── Offline mutation queue ──────────────────────────────────────────────
+
+    private fun loadPendingMutations(): List<PendingMutation> {
+        val raw = prefs.getString(KEY_PENDING_MUTATIONS, null) ?: return emptyList()
+        return try { json.decodeFromString(raw) } catch (_: Exception) { emptyList() }
+    }
+
+    private fun savePendingMutations(mutations: List<PendingMutation>) {
+        prefs.edit().putString(KEY_PENDING_MUTATIONS, json.encodeToString(mutations)).apply()
+    }
+
+    private fun queueMutation(mutation: PendingMutation) {
+        synchronized(mutationQueueLock) {
+            val current = loadPendingMutations().toMutableList()
+            current.removeAll { it.listId == mutation.listId && it.itemId == mutation.itemId }
+            current.add(mutation)
+            savePendingMutations(current)
+        }
+    }
+
+    private fun removePendingMutation(listId: String, itemId: String) {
+        synchronized(mutationQueueLock) {
+            val current = loadPendingMutations()
+            val filtered = current.filter { !(it.listId == listId && it.itemId == itemId) }
+            if (filtered.size != current.size) savePendingMutations(filtered)
+        }
+    }
+
+    /**
+     * Pushes an item upsert to the server; queues the mutation for retry if the
+     * push fails (e.g. device is offline).
+     */
+    private suspend fun pushItemOrQueue(listId: String, itemId: String) {
+        val item = itemIn(listId, itemId) ?: return
+        if (RemoteDataSource.upsertItem(listId, item)) {
+            removePendingMutation(listId, itemId)
+        } else {
+            queueMutation(PendingMutation(PendingMutation.UPSERT, listId, itemId, item))
+        }
+    }
+
+    private suspend fun pushDeleteOrQueue(listId: String, itemId: String) {
+        if (RemoteDataSource.deleteItem(listId, itemId)) {
+            removePendingMutation(listId, itemId)
+        } else {
+            queueMutation(PendingMutation(PendingMutation.DELETE, listId, itemId))
+        }
+    }
+
+    /**
+     * Attempts to push all queued offline mutations to the server.
+     * Returns true when the queue is empty (all flushed or nothing pending).
+     */
+    private suspend fun flushPendingMutations(): Boolean {
+        val pending = synchronized(mutationQueueLock) { loadPendingMutations() }
+        if (pending.isEmpty()) return true
+
+        val remaining = mutableListOf<PendingMutation>()
+        for (mutation in pending) {
+            val ok = when (mutation.type) {
+                PendingMutation.UPSERT ->
+                    mutation.item?.let { RemoteDataSource.upsertItem(mutation.listId, it) } ?: true
+                PendingMutation.DELETE ->
+                    RemoteDataSource.deleteItem(mutation.listId, mutation.itemId)
+                else -> true
+            }
+            if (!ok) remaining.add(mutation)
+        }
+
+        synchronized(mutationQueueLock) { savePendingMutations(remaining) }
+        return remaining.isEmpty()
     }
 
     fun getLastListId(): String? = prefs.getString(KEY_LAST_LIST_ID, null)
@@ -145,9 +245,24 @@ object ShoppingRepository {
 
     suspend fun loadCategories(): List<UserCategory> {
         val profileId = getOrCreateProfileId()
-        val remote = RemoteDataSource.getCategories(profileId) ?: return emptyList()
-        if (remote.isEmpty()) return createDefaultCategories(profileId)
-        return remote
+        val remote = RemoteDataSource.getCategories(profileId)
+        if (remote == null) return loadCachedCategories()
+        val result = if (remote.isEmpty()) createDefaultCategories(profileId) else remote
+        saveCategories(result)
+        return result
+    }
+
+    private fun loadCachedCategories(): List<UserCategory> {
+        val raw = prefs.getString(KEY_CATEGORIES, null) ?: return emptyList()
+        return try {
+            json.decodeFromString(raw)
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveCategories(categories: List<UserCategory>) {
+        prefs.edit().putString(KEY_CATEGORIES, json.encodeToString(categories)).apply()
     }
 
     private suspend fun createDefaultCategories(profileId: String): List<UserCategory> {
@@ -306,6 +421,7 @@ object ShoppingRepository {
      * the server is seeded for other users.
      */
     suspend fun syncAllLists() {
+        flushPendingMutations()
         val profileId = getOrCreateProfileId()
         val remote = RemoteDataSource.getAllLists(profileId) ?: return   // network error — keep local
 
@@ -331,8 +447,13 @@ object ShoppingRepository {
      * Called every 5 seconds while a list screen is open.
      * Replaces local items with whatever the server has — this is how changes
      * from other users appear.
+     * Skipped while a recent local write is still propagating to the server.
+     * Pending offline mutations are flushed before pulling; if some remain
+     * (still offline), the pull is skipped to avoid overwriting local changes.
      */
     suspend fun syncList(listId: String) {
+        if (System.currentTimeMillis() - lastMutationAt.get() < SYNC_COOLDOWN_MS) return
+        if (!flushPendingMutations()) return
         val remote = RemoteDataSource.getList(listId) ?: return
         val updated = remote.toGroceryList()
         _lists.update { lists -> lists.map { if (it.id == listId) updated else it } }
@@ -401,6 +522,7 @@ object ShoppingRepository {
     // ── Item operations ────────────────────────────────────────────────────
 
     fun toggleItem(listId: String, itemId: String) {
+        recordMutation()
         updateList(listId) { list ->
             list.copy(items = list.items.map { item ->
                 if (item.id == itemId) {
@@ -412,12 +534,13 @@ object ShoppingRepository {
                 } else item
             })
         }
-        scope.launch { itemIn(listId, itemId)?.let { RemoteDataSource.upsertItem(listId, it) } }
+        scope.launch { pushItemOrQueue(listId, itemId) }
     }
 
     fun deleteItem(listId: String, itemId: String) {
+        recordMutation()
         updateList(listId) { list -> list.copy(items = list.items.filter { it.id != itemId }) }
-        scope.launch { RemoteDataSource.deleteItem(listId, itemId) }
+        scope.launch { pushDeleteOrQueue(listId, itemId) }
     }
 
     fun purgeExpiredCheckedItems(listId: String) {
@@ -429,55 +552,61 @@ object ShoppingRepository {
             ?: return
         expired.forEach { item ->
             updateList(listId) { list -> list.copy(items = list.items.filter { it.id != item.id }) }
-            scope.launch { RemoteDataSource.deleteItem(listId, item.id) }
+            scope.launch { pushDeleteOrQueue(listId, item.id) }
         }
     }
 
     fun updateItemWeekday(listId: String, itemId: String, weekday: String?) {
+        recordMutation()
         updateList(listId) { list ->
             list.copy(items = list.items.map { if (it.id == itemId) it.copy(weekday = weekday) else it })
         }
-        scope.launch { itemIn(listId, itemId)?.let { RemoteDataSource.upsertItem(listId, it) } }
+        scope.launch { pushItemOrQueue(listId, itemId) }
     }
 
     fun updateItemPrice(listId: String, itemId: String, price: String?) {
+        recordMutation()
         updateList(listId) { list ->
             list.copy(items = list.items.map {
                 if (it.id == itemId) it.copy(price = price?.ifBlank { null }) else it
             })
         }
-        scope.launch { itemIn(listId, itemId)?.let { RemoteDataSource.upsertItem(listId, it) } }
+        scope.launch { pushItemOrQueue(listId, itemId) }
     }
 
     fun updateItemSupermarket(listId: String, itemId: String, supermarket: String?) {
+        recordMutation()
         updateList(listId) { list ->
             list.copy(items = list.items.map {
                 if (it.id == itemId) it.copy(supermarket = supermarket?.ifBlank { null }) else it
             })
         }
-        scope.launch { itemIn(listId, itemId)?.let { RemoteDataSource.upsertItem(listId, it) } }
+        scope.launch { pushItemOrQueue(listId, itemId) }
     }
 
     fun setItemQuantity(listId: String, itemId: String, quantity: String) {
+        recordMutation()
         val trimmed = quantity.trim().ifBlank { "1" }
         updateList(listId) { list ->
             list.copy(items = list.items.map {
                 if (it.id == itemId) it.copy(quantity = trimmed) else it
             })
         }
-        scope.launch { itemIn(listId, itemId)?.let { RemoteDataSource.upsertItem(listId, it) } }
+        scope.launch { pushItemOrQueue(listId, itemId) }
     }
 
     fun updateItemComment(listId: String, itemId: String, comment: String?) {
+        recordMutation()
         updateList(listId) { list ->
             list.copy(items = list.items.map {
                 if (it.id == itemId) it.copy(comment = comment?.ifBlank { null }) else it
             })
         }
-        scope.launch { itemIn(listId, itemId)?.let { RemoteDataSource.upsertItem(listId, it) } }
+        scope.launch { pushItemOrQueue(listId, itemId) }
     }
 
     fun updateItemName(listId: String, itemId: String, newName: String) {
+        recordMutation()
         val trimmed = newName.trim()
         if (trimmed.isBlank()) return
         val oldName = itemIn(listId, itemId)?.name ?: return
@@ -487,7 +616,7 @@ object ShoppingRepository {
                 if (it.id == itemId) it.copy(name = trimmed) else it
             })
         }
-        scope.launch { itemIn(listId, itemId)?.let { RemoteDataSource.upsertItem(listId, it) } }
+        scope.launch { pushItemOrQueue(listId, itemId) }
         scope.launch {
             val catalogItem = _catalogItems.value.firstOrNull { it.name.equals(oldName, ignoreCase = true) }
             if (catalogItem != null) {
@@ -499,13 +628,14 @@ object ShoppingRepository {
     }
 
     fun adjustItemQuantity(listId: String, itemId: String, delta: Int) {
+        recordMutation()
         updateList(listId) { list ->
             list.copy(items = list.items.map { item ->
                 if (item.id == itemId) item.copy(quantity = adjustQuantityString(item.quantity, delta))
                 else item
             })
         }
-        scope.launch { itemIn(listId, itemId)?.let { RemoteDataSource.upsertItem(listId, it) } }
+        scope.launch { pushItemOrQueue(listId, itemId) }
     }
 
     private fun adjustQuantityString(quantity: String, delta: Int): String {
@@ -519,6 +649,7 @@ object ShoppingRepository {
     }
 
     fun addOrMergeItem(listId: String, name: String, quantity: String, category: String) {
+        recordMutation()
         val trimmedName = name.trim()
         val trimmedQty = quantity.trim().ifBlank { "1" }
         updateList(listId) { list ->
@@ -557,7 +688,7 @@ object ShoppingRepository {
             val item = _lists.value.find { it.id == listId }
                 ?.items?.firstOrNull { it.name.equals(trimmedName, ignoreCase = true) }
                 ?: return@launch
-            RemoteDataSource.upsertItem(listId, item)
+            pushItemOrQueue(listId, item.id)
         }
         saveToCatalog(trimmedName, category)
     }
