@@ -28,7 +28,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -48,7 +47,6 @@ import androidx.compose.material.icons.filled.LocalOffer
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Store
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -203,11 +201,16 @@ fun GroceryListScreen(
                                         onClick = {
                                             overflowExpanded = false
                                             try {
-                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                                    .addCategory(Intent.CATEGORY_BROWSABLE)
+                                                val intent =
+                                                    Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                                        .addCategory(Intent.CATEGORY_BROWSABLE)
                                                 context.startActivity(intent)
                                             } catch (_: ActivityNotFoundException) {
-                                                Toast.makeText(context, "$label er ikke installeret", Toast.LENGTH_SHORT).show()
+                                                Toast.makeText(
+                                                    context,
+                                                    "$label er ikke installeret",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
                                             }
                                         }
                                     )
@@ -222,7 +225,7 @@ fun GroceryListScreen(
                     scrolledContainerColor = MaterialTheme.colorScheme.background
                 )
             )
-        },        floatingActionButton = {
+        }, floatingActionButton = {
             FloatingActionButton(
                 onClick = viewModel::showAddItemDialog,
                 containerColor = MaterialTheme.colorScheme.primary
@@ -311,9 +314,9 @@ private fun GroceryItemList(
     val grouped: Map<String, List<GroceryItem>> = currentItems
         .sortedWith(
             compareBy(
-            { categoryOrder[it.category] ?: Int.MAX_VALUE },
-            { it.name }
-        ))
+                { categoryOrder[it.category] ?: Int.MAX_VALUE },
+                { it.name }
+            ))
         .groupBy { it.category }
 
     var checkedSectionExpanded by rememberSaveable { mutableStateOf(false) }
@@ -412,6 +415,7 @@ private fun GroceryItemList(
                         onAdjustQuantity = { onAdjustQuantity(item.id, it) },
                         onSetQuantity = { onSetQuantity(item.id, it) },
                         onUpdateComment = { onUpdateComment(item.id, it) },
+                        isFuture = true,
                     )
                 }
             }
@@ -578,6 +582,7 @@ private fun GroceryItemCard(
     shops: List<Shop>,
     isFirst: Boolean,
     isLast: Boolean,
+    isFuture: Boolean = false,
     onToggle: () -> Unit,
     onDelete: () -> Unit,
     onUpdateName: (String) -> Unit,
@@ -587,7 +592,8 @@ private fun GroceryItemCard(
     onAdjustQuantity: (Int) -> Unit,
     onSetQuantity: (String) -> Unit,
     onUpdateComment: (String?) -> Unit,
-) {
+
+    ) {
     var showDetailsDialog by remember { mutableStateOf(false) }
     var showQuantityControls by rememberSaveable(item.id) { mutableStateOf(false) }
     var interactionTick by remember { mutableStateOf(0) }
@@ -665,26 +671,28 @@ private fun GroceryItemCard(
                         val fgColor = (shop?.foregroundColor?.toColor() ?: Color.White)
                         DetailPill(
                             icon = {},
-                            label = shop?.name ?: shopId,
+                            label = shop?.name ?: "Special",
                             alpha = contentAlpha,
                             backgroundColor = bgColor?.copy(alpha = contentAlpha * 0.9f),
                             contentColor = fgColor.copy(alpha = contentAlpha),
                         )
                     }
                     item.weekday?.let { day ->
-                        DetailPill(
-                            icon = {
-                                Icon(
-                                    Icons.Default.CalendarToday,
-                                    null,
-                                    modifier = Modifier.size(10.dp)
-                                )
-                            },
-                            label = dateToWeekdayAbbr(day),
-                            alpha = contentAlpha,
-                            backgroundColor = backgroundColor,
-                            textStyle = MaterialTheme.typography.labelMedium,
-                        )
+                        if (isFuture) {
+                            DetailPill(
+                                icon = {
+                                    Icon(
+                                        Icons.Default.CalendarToday,
+                                        null,
+                                        modifier = Modifier.size(10.dp)
+                                    )
+                                },
+                                label = dateToWeekdayAbbr(day),
+                                alpha = contentAlpha,
+                                backgroundColor = backgroundColor,
+                                textStyle = MaterialTheme.typography.labelMedium,
+                            )
+                        }
                     }
                     item.price?.let { price ->
                         DetailPill(
@@ -834,10 +842,14 @@ private fun ItemDetailsDialog(
             ) {
                 Text(
                     modifier = Modifier.padding(top = 2.dp),
-                    text = "Rediger vare")
+                    text = "Rediger vare"
+                )
                 IconButton(onClick = {
                     val encoded = Uri.encode(item.name)
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://etilbudsavis.dk/soeg/$encoded"))
+                    val intent = Intent(
+                        Intent.ACTION_VIEW,
+                        Uri.parse("https://etilbudsavis.dk/soeg/$encoded")
+                    )
                     context.startActivity(intent)
                 }) {
                     Icon(
