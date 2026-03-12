@@ -6,7 +6,9 @@ import dk.joachim.shopping.data.network.RemoteDataSource
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,6 +18,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
 private const val PREFS_NAME = "shopping_prefs"
@@ -56,6 +59,20 @@ object ShoppingRepository {
     private fun recordMutation() = lastMutationAt.set(System.currentTimeMillis())
 
     private val mutationQueueLock = Any()
+
+    // Debounce pushes per item: rapid successive mutations (e.g. add then set price)
+    // are collapsed into a single push carrying the latest state, preventing out-of-order
+    // network requests from overwriting newer server data with older snapshots.
+    private val pendingPushJobs = ConcurrentHashMap<String, Job>()
+    private fun schedulePush(listId: String, itemId: String) {
+        val key = "$listId/$itemId"
+        pendingPushJobs[key]?.cancel()
+        pendingPushJobs[key] = scope.launch {
+            delay(500L)
+            pushItemOrQueue(listId, itemId)
+            pendingPushJobs.remove(key)
+        }
+    }
 
     private val _lists = MutableStateFlow<List<GroceryList>>(emptyList())
     val lists: StateFlow<List<GroceryList>> = _lists.asStateFlow()
@@ -452,9 +469,11 @@ object ShoppingRepository {
      * (still offline), the pull is skipped to avoid overwriting local changes.
      */
     suspend fun syncList(listId: String) {
-        if (System.currentTimeMillis() - lastMutationAt.get() < SYNC_COOLDOWN_MS) return
+        val mutationSnapshot = lastMutationAt.get()
+        if (System.currentTimeMillis() - mutationSnapshot < SYNC_COOLDOWN_MS) return
         if (!flushPendingMutations()) return
         val remote = RemoteDataSource.getList(listId) ?: return
+        if (lastMutationAt.get() != mutationSnapshot) return
         val updated = remote.toGroceryList()
         _lists.update { lists -> lists.map { if (it.id == listId) updated else it } }
         saveLists(_lists.value)
@@ -534,11 +553,14 @@ object ShoppingRepository {
                 } else item
             })
         }
-        scope.launch { pushItemOrQueue(listId, itemId) }
+        schedulePush(listId, itemId)
     }
 
     fun deleteItem(listId: String, itemId: String) {
         recordMutation()
+        val key = "$listId/$itemId"
+        pendingPushJobs[key]?.cancel()
+        pendingPushJobs.remove(key)
         updateList(listId) { list -> list.copy(items = list.items.filter { it.id != itemId }) }
         scope.launch { pushDeleteOrQueue(listId, itemId) }
     }
@@ -551,6 +573,8 @@ object ShoppingRepository {
             ?.filter { it.isChecked && (it.checkedAt ?: 0L) < cutoff }
             ?: return
         expired.forEach { item ->
+            pendingPushJobs["$listId/${item.id}"]?.cancel()
+            pendingPushJobs.remove("$listId/${item.id}")
             updateList(listId) { list -> list.copy(items = list.items.filter { it.id != item.id }) }
             scope.launch { pushDeleteOrQueue(listId, item.id) }
         }
@@ -561,7 +585,7 @@ object ShoppingRepository {
         updateList(listId) { list ->
             list.copy(items = list.items.map { if (it.id == itemId) it.copy(weekday = weekday) else it })
         }
-        scope.launch { pushItemOrQueue(listId, itemId) }
+        schedulePush(listId, itemId)
     }
 
     fun updateItemPrice(listId: String, itemId: String, price: String?) {
@@ -571,7 +595,7 @@ object ShoppingRepository {
                 if (it.id == itemId) it.copy(price = price?.ifBlank { null }) else it
             })
         }
-        scope.launch { pushItemOrQueue(listId, itemId) }
+        schedulePush(listId, itemId)
     }
 
     fun updateItemSupermarket(listId: String, itemId: String, supermarket: String?) {
@@ -581,7 +605,7 @@ object ShoppingRepository {
                 if (it.id == itemId) it.copy(supermarket = supermarket?.ifBlank { null }) else it
             })
         }
-        scope.launch { pushItemOrQueue(listId, itemId) }
+        schedulePush(listId, itemId)
     }
 
     fun setItemQuantity(listId: String, itemId: String, quantity: String) {
@@ -592,7 +616,7 @@ object ShoppingRepository {
                 if (it.id == itemId) it.copy(quantity = trimmed) else it
             })
         }
-        scope.launch { pushItemOrQueue(listId, itemId) }
+        schedulePush(listId, itemId)
     }
 
     fun updateItemComment(listId: String, itemId: String, comment: String?) {
@@ -602,7 +626,7 @@ object ShoppingRepository {
                 if (it.id == itemId) it.copy(comment = comment?.ifBlank { null }) else it
             })
         }
-        scope.launch { pushItemOrQueue(listId, itemId) }
+        schedulePush(listId, itemId)
     }
 
     fun updateItemName(listId: String, itemId: String, newName: String) {
@@ -616,7 +640,7 @@ object ShoppingRepository {
                 if (it.id == itemId) it.copy(name = trimmed) else it
             })
         }
-        scope.launch { pushItemOrQueue(listId, itemId) }
+        schedulePush(listId, itemId)
         scope.launch {
             val catalogItem = _catalogItems.value.firstOrNull { it.name.equals(oldName, ignoreCase = true) }
             if (catalogItem != null) {
@@ -635,7 +659,7 @@ object ShoppingRepository {
                 else item
             })
         }
-        scope.launch { pushItemOrQueue(listId, itemId) }
+        schedulePush(listId, itemId)
     }
 
     private fun adjustQuantityString(quantity: String, delta: Int): String {
@@ -684,12 +708,10 @@ object ShoppingRepository {
                 )
             }
         }
-        scope.launch {
-            val item = _lists.value.find { it.id == listId }
-                ?.items?.firstOrNull { it.name.equals(trimmedName, ignoreCase = true) }
-                ?: return@launch
-            pushItemOrQueue(listId, item.id)
-        }
+        val itemId = _lists.value.find { it.id == listId }
+            ?.items?.firstOrNull { it.name.equals(trimmedName, ignoreCase = true) }
+            ?.id ?: return
+        schedulePush(listId, itemId)
         saveToCatalog(trimmedName, category)
     }
 
