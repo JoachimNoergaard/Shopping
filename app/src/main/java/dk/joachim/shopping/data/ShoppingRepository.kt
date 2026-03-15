@@ -28,6 +28,8 @@ private const val KEY_PROFILE_ID = "profile_id"
 private const val KEY_ONBOARDING_DONE = "onboarding_done"
 private const val KEY_CATEGORIES = "categories"
 private const val KEY_PENDING_MUTATIONS = "pending_mutations"
+private const val KEY_MENU_PLANS = "menu_plans"
+private const val KEY_RECIPES = "recipes"
 // How long (ms) to suppress server sync after a local write, giving the server
 // time to process the push before we pull again.
 private const val SYNC_COOLDOWN_MS = 10_000L
@@ -83,9 +85,17 @@ object ShoppingRepository {
     private val _shops = MutableStateFlow<List<Shop>>(emptyList())
     val shops: StateFlow<List<Shop>> = _shops.asStateFlow()
 
+    private val _menuPlans = MutableStateFlow<List<MenuPlan>>(emptyList())
+    val menuPlans: StateFlow<List<MenuPlan>> = _menuPlans.asStateFlow()
+
+    private val _recipes = MutableStateFlow<List<Recipe>>(emptyList())
+    val recipes: StateFlow<List<Recipe>> = _recipes.asStateFlow()
+
     fun init(context: Context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         _lists.value = loadLists()
+        _menuPlans.value = loadMenuPlans()
+        _recipes.value = loadRecipes()
     }
 
     // ── Persistence ────────────────────────────────────────────────────────
@@ -101,6 +111,157 @@ object ShoppingRepository {
 
     private fun saveLists(lists: List<GroceryList>) {
         prefs.edit().putString(KEY_LISTS, json.encodeToString(lists)).apply()
+    }
+
+    private fun loadMenuPlans(): List<MenuPlan> {
+        val raw = prefs.getString(KEY_MENU_PLANS, null) ?: return emptyList()
+        return try { json.decodeFromString(raw) } catch (_: Exception) { emptyList() }
+    }
+
+    private fun saveMenuPlans(plans: List<MenuPlan>) {
+        prefs.edit().putString(KEY_MENU_PLANS, json.encodeToString(plans)).apply()
+    }
+
+    fun addMenuPlan(name: String, description: String = ""): String {
+        val profileId = getOrCreateProfileId()
+        val plan = MenuPlan(
+            id = UUID.randomUUID().toString(),
+            profileId = profileId,
+            name = name,
+            description = description,
+        )
+        val updated = _menuPlans.value + plan
+        _menuPlans.value = updated
+        saveMenuPlans(updated)
+        scope.launch { RemoteDataSource.upsertMenuPlan(plan) }
+        return plan.id
+    }
+
+    fun updateMenuPlan(planId: String, name: String, servings: Int) {
+        val updated = _menuPlans.value.map { plan ->
+            if (plan.id == planId) plan.copy(name = name, servings = servings) else plan
+        }
+        _menuPlans.value = updated
+        saveMenuPlans(updated)
+        scope.launch {
+            updated.firstOrNull { it.id == planId }?.let { RemoteDataSource.upsertMenuPlan(it) }
+        }
+    }
+
+    fun deleteMenuPlan(id: String) {
+        val plan = _menuPlans.value.firstOrNull { it.id == id } ?: return
+        val updated = _menuPlans.value.filter { it.id != id }
+        _menuPlans.value = updated
+        saveMenuPlans(updated)
+        scope.launch { RemoteDataSource.deleteMenuPlan(plan.profileId, id) }
+    }
+
+    suspend fun syncMenuPlans() {
+        val profileId = getOrCreateProfileId()
+        val remote = RemoteDataSource.getMenuPlans(profileId) ?: return
+        val plans = remote.map { it.toMenuPlan() }
+        _menuPlans.value = plans
+        saveMenuPlans(plans)
+    }
+
+    // ── Recipes ────────────────────────────────────────────────────────────
+
+    private fun loadRecipes(): List<Recipe> {
+        val raw = prefs.getString(KEY_RECIPES, null) ?: return emptyList()
+        return try { json.decodeFromString(raw) } catch (_: Exception) { emptyList() }
+    }
+
+    private fun saveRecipes(recipes: List<Recipe>) {
+        prefs.edit().putString(KEY_RECIPES, json.encodeToString(recipes)).apply()
+    }
+
+    fun addRecipe(name: String, description: String = "") {
+        val profileId = getOrCreateProfileId()
+        val recipe = Recipe(
+            id = UUID.randomUUID().toString(),
+            profileId = profileId,
+            name = name,
+            description = description,
+        )
+        addRecipe(recipe)
+    }
+
+    fun addRecipe(recipe: Recipe) {
+        val updated = _recipes.value + recipe
+        _recipes.value = updated
+        saveRecipes(updated)
+        scope.launch { RemoteDataSource.upsertRecipe(recipe) }
+    }
+
+    fun updateRecipe(recipe: Recipe) {
+        _recipes.update { list -> list.map { if (it.id == recipe.id) recipe else it } }
+        saveRecipes(_recipes.value)
+        scope.launch { RemoteDataSource.upsertRecipe(recipe) }
+    }
+
+    fun deleteRecipe(id: String) {
+        val recipe = _recipes.value.firstOrNull { it.id == id } ?: return
+        val updated = _recipes.value.filter { it.id != id }
+        _recipes.value = updated
+        saveRecipes(updated)
+        // Remove this recipe from any menu plans that reference it
+        val updatedPlans = _menuPlans.value.map { plan ->
+            if (id in plan.recipeIds) plan.copy(recipeIds = plan.recipeIds - id) else plan
+        }
+        _menuPlans.value = updatedPlans
+        saveMenuPlans(updatedPlans)
+        scope.launch {
+            RemoteDataSource.deleteRecipe(recipe.profileId, id)
+            updatedPlans.filter { id !in it.recipeIds && _menuPlans.value.any { p -> p.id == it.id && id in p.recipeIds } }
+                .forEach { RemoteDataSource.upsertMenuPlan(it) }
+        }
+    }
+
+    fun addRecipeToMenuPlan(planId: String, recipeId: String) {
+        val updated = _menuPlans.value.map { plan ->
+            if (plan.id == planId && recipeId !in plan.recipeIds)
+                plan.copy(recipeIds = plan.recipeIds + recipeId)
+            else plan
+        }
+        _menuPlans.value = updated
+        saveMenuPlans(updated)
+        scope.launch {
+            updated.firstOrNull { it.id == planId }?.let { RemoteDataSource.upsertMenuPlan(it) }
+        }
+    }
+
+    fun removeRecipeFromMenuPlan(planId: String, recipeId: String) {
+        val updated = _menuPlans.value.map { plan ->
+            if (plan.id == planId) plan.copy(recipeIds = plan.recipeIds - recipeId) else plan
+        }
+        _menuPlans.value = updated
+        saveMenuPlans(updated)
+        scope.launch {
+            updated.firstOrNull { it.id == planId }?.let { RemoteDataSource.upsertMenuPlan(it) }
+        }
+    }
+
+    fun toggleStepCompletion(planId: String, recipeId: String, sectionIndex: Int, stepIndex: Int) {
+        val step = CompletedStep(sectionIndex, stepIndex)
+        val updated = _menuPlans.value.map { plan ->
+            if (plan.id != planId) return@map plan
+            val steps = plan.recipeProgress[recipeId].orEmpty().toMutableList()
+            if (steps.contains(step)) steps.remove(step) else steps.add(step)
+            plan.copy(recipeProgress = plan.recipeProgress + (recipeId to steps))
+        }
+        _menuPlans.value = updated
+        saveMenuPlans(updated)
+        scope.launch {
+            updated.firstOrNull { it.id == planId }?.let { RemoteDataSource.upsertMenuPlan(it) }
+        }
+    }
+
+    suspend fun syncRecipes() {
+        val profileId = getOrCreateProfileId()
+        val remote = RemoteDataSource.getRecipes(profileId) ?: return
+        val recipes = remote.map { it.toRecipe() }
+        _recipes.value = recipes
+        saveRecipes(recipes)
     }
 
     // ── Offline mutation queue ──────────────────────────────────────────────

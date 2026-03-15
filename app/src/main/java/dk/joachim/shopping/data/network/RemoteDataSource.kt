@@ -3,7 +3,9 @@ package dk.joachim.shopping.data.network
 import dk.joachim.shopping.data.CatalogItem
 import dk.joachim.shopping.data.GroceryItem
 import dk.joachim.shopping.data.GroceryList
+import dk.joachim.shopping.data.MenuPlan
 import dk.joachim.shopping.data.Profile
+import dk.joachim.shopping.data.Recipe
 import dk.joachim.shopping.data.ReorderRequest
 import dk.joachim.shopping.data.Shop
 import dk.joachim.shopping.data.UserCategory
@@ -99,4 +101,63 @@ object RemoteDataSource {
 
     suspend fun deleteCatalogItem(profileId: String, id: String): Boolean =
         runCatching { api.deleteCatalogItem(profileId, id) }.isSuccess
+
+    // ── Menu plans ────────────────────────────────────────────────────────────
+
+    suspend fun getMenuPlans(profileId: String): List<ApiMenuPlan>? =
+        runCatching { api.getMenuPlans(profileId) }.getOrNull()
+
+    suspend fun upsertMenuPlan(plan: MenuPlan): Boolean =
+        runCatching {
+            api.upsertMenuPlan(
+                plan.profileId,
+                plan.id,
+                UpsertMenuPlanRequest(
+                    id = plan.id,
+                    profileId = plan.profileId,
+                    name = plan.name,
+                    description = plan.description,
+                    servings = plan.servings,
+                    recipeIds = plan.recipeIds,
+                    recipeProgress = plan.recipeProgress,
+                    createdAt = plan.createdAt,
+                )
+            )
+        }.isSuccess
+
+    suspend fun deleteMenuPlan(profileId: String, id: String): Boolean =
+        runCatching { api.deleteMenuPlan(profileId, id) }.isSuccess
+
+    // ── Recipes ───────────────────────────────────────────────────────────────
+
+    suspend fun getRecipes(profileId: String): List<ApiRecipe>? =
+        runCatching { api.getRecipes(profileId) }.getOrNull()
+
+    suspend fun upsertRecipe(recipe: Recipe): Boolean =
+        runCatching {
+            api.upsertRecipe(
+                recipe.profileId,
+                recipe.id,
+                UpsertRecipeRequest(
+                    id = recipe.id,
+                    profileId = recipe.profileId,
+                    name = recipe.name,
+                    description = recipe.description,
+                    rating = recipe.rating,
+                    servings = recipe.servings,
+                    nutritionFacts = recipe.nutritionFacts,
+                    prepTimeMinutes = recipe.prepTimeMinutes,
+                    totalTimeMinutes = recipe.totalTimeMinutes,
+                    durability = recipe.durability,
+                    courseType = recipe.courseType,
+                    ingredientSections = recipe.ingredientSections,
+                    instructionSections = recipe.instructionSections,
+                    tips = recipe.tips,
+                    createdAt = recipe.createdAt,
+                )
+            )
+        }.isSuccess
+
+    suspend fun deleteRecipe(profileId: String, id: String): Boolean =
+        runCatching { api.deleteRecipe(profileId, id) }.isSuccess
 }

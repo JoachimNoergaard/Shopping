@@ -6,13 +6,20 @@
  *
  * Endpoints
  * ---------
- * GET    /lists                          List all lists (with items)
- * POST   /lists                          Create a list
- * GET    /lists/{id}                     Get one list with items
- * PATCH  /lists/{id}                     Rename a list
- * DELETE /lists/{id}                     Delete list + items
- * PUT    /lists/{id}/items/{itemId}      Create or update an item
- * DELETE /lists/{id}/items/{itemId}      Delete an item
+ * GET    /lists                                     List all lists (with items)
+ * POST   /lists                                     Create a list
+ * GET    /lists/{id}                                Get one list with items
+ * PATCH  /lists/{id}                                Rename a list
+ * DELETE /lists/{id}                                Delete list + items
+ * PUT    /lists/{id}/items/{itemId}                 Create or update an item
+ * DELETE /lists/{id}/items/{itemId}                 Delete an item
+ *
+ * GET    /profile/{profileId}/recipes               List all recipes
+ * PUT    /profile/{profileId}/recipes/{id}          Create or update a recipe
+ * DELETE /profile/{profileId}/recipes/{id}          Delete a recipe
+ * GET    /profile/{profileId}/menu-plans            List all menu plans (with recipeIds)
+ * PUT    /profile/{profileId}/menu-plans/{id}       Create or update a menu plan
+ * DELETE /profile/{profileId}/menu-plans/{id}       Delete a menu plan
  */
 
 // ── Database config — fill these in ───────────────────────────────────────
@@ -146,6 +153,67 @@ $db->exec('CREATE TABLE IF NOT EXISTS list_members (
     INDEX idx_list_members_profile (profile_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
 
+$db->exec('CREATE TABLE IF NOT EXISTS recipes (
+    id                   VARCHAR(36)  NOT NULL,
+    profile_id           VARCHAR(36)  NOT NULL,
+    name                 VARCHAR(255) NOT NULL,
+    description          TEXT         NOT NULL,
+    rating               INT          NOT NULL DEFAULT 0,
+    servings             INT          NOT NULL DEFAULT 0,
+    nutrition_facts      TEXT         NOT NULL,
+    prep_time_minutes    INT          NOT NULL DEFAULT 0,
+    total_time_minutes   INT          NOT NULL DEFAULT 0,
+    durability           VARCHAR(255) NOT NULL DEFAULT \'\',
+    course_type          VARCHAR(100) NOT NULL DEFAULT \'\',
+    ingredient_sections  TEXT         NOT NULL,
+    instruction_sections TEXT         NOT NULL,
+    tips                 TEXT         NOT NULL,
+    created_at           BIGINT       NOT NULL,
+    updated_at           BIGINT       NOT NULL,
+    PRIMARY KEY (id),
+    INDEX idx_recipes_profile (profile_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+
+// Migration: add new recipe columns for databases created before they existed
+foreach ([
+    "ALTER TABLE recipes ADD COLUMN rating INT NOT NULL DEFAULT 0",
+    "ALTER TABLE recipes ADD COLUMN servings INT NOT NULL DEFAULT 0",
+    "ALTER TABLE recipes ADD COLUMN nutrition_facts TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE recipes ADD COLUMN prep_time_minutes INT NOT NULL DEFAULT 0",
+    "ALTER TABLE recipes ADD COLUMN total_time_minutes INT NOT NULL DEFAULT 0",
+    "ALTER TABLE recipes ADD COLUMN durability VARCHAR(255) NOT NULL DEFAULT ''",
+    "ALTER TABLE recipes ADD COLUMN course_type VARCHAR(100) NOT NULL DEFAULT ''",
+    "ALTER TABLE recipes ADD COLUMN ingredient_sections TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE recipes ADD COLUMN instruction_sections TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE recipes ADD COLUMN tips TEXT NOT NULL DEFAULT ''",
+] as $sql) {
+    try { $db->exec($sql); } catch (PDOException $e) { /* already exists */ }
+}
+
+$db->exec('CREATE TABLE IF NOT EXISTS menu_plans (
+    id          VARCHAR(36)  NOT NULL,
+    profile_id  VARCHAR(36)  NOT NULL,
+    name        VARCHAR(255) NOT NULL,
+    description TEXT         NOT NULL,
+    servings    INT          NOT NULL DEFAULT 0,
+    created_at  BIGINT       NOT NULL,
+    updated_at  BIGINT       NOT NULL,
+    PRIMARY KEY (id),
+    INDEX idx_menu_plans_profile (profile_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+
+try { $db->exec('ALTER TABLE menu_plans ADD COLUMN recipe_progress TEXT NOT NULL DEFAULT \'{}\''); } catch (PDOException $e) { /* already exists */ }
+try { $db->exec('ALTER TABLE menu_plans ADD COLUMN servings INT NOT NULL DEFAULT 0'); } catch (PDOException $e) { /* already exists */ }
+
+$db->exec('CREATE TABLE IF NOT EXISTS menu_plan_recipes (
+    menu_plan_id VARCHAR(36) NOT NULL,
+    recipe_id    VARCHAR(36) NOT NULL,
+    sort_order   INT         NOT NULL DEFAULT 0,
+    PRIMARY KEY (menu_plan_id, recipe_id),
+    FOREIGN KEY (menu_plan_id) REFERENCES menu_plans(id) ON DELETE CASCADE,
+    FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function nowMs(): int
@@ -192,6 +260,44 @@ function json_out(mixed $data, int $status = 200): never
 function not_found(): never
 {
     json_out(['error' => 'Not found'], 404);
+}
+
+function menuPlanToJson(PDO $db, array $row): array
+{
+    $stmt = $db->prepare('SELECT recipe_id FROM menu_plan_recipes WHERE menu_plan_id = ? ORDER BY sort_order ASC');
+    $stmt->execute([$row['id']]);
+    $progress = json_decode($row['recipe_progress'] ?? '{}', true) ?: [];
+    return [
+        'id'             => $row['id'],
+        'profileId'      => $row['profile_id'],
+        'name'           => $row['name'],
+        'description'    => $row['description'] ?? '',
+        'servings'       => (int) ($row['servings'] ?? 0),
+        'recipeIds'      => $stmt->fetchAll(PDO::FETCH_COLUMN),
+        'recipeProgress' => (object) $progress,
+        'createdAt'      => (int) $row['created_at'],
+    ];
+}
+
+function recipeToJson(array $row): array
+{
+    return [
+        'id'                  => $row['id'],
+        'profileId'           => $row['profile_id'],
+        'name'                => $row['name'],
+        'description'         => $row['description'] ?? '',
+        'rating'              => (int) ($row['rating'] ?? 0),
+        'servings'            => (int) ($row['servings'] ?? 0),
+        'nutritionFacts'      => $row['nutrition_facts'] ?? '',
+        'prepTimeMinutes'     => (int) ($row['prep_time_minutes'] ?? 0),
+        'totalTimeMinutes'    => (int) ($row['total_time_minutes'] ?? 0),
+        'durability'          => $row['durability'] ?? '',
+        'courseType'           => $row['course_type'] ?? '',
+        'ingredientSections'  => json_decode($row['ingredient_sections'] ?? '[]', true) ?: [],
+        'instructionSections' => json_decode($row['instruction_sections'] ?? '[]', true) ?: [],
+        'tips'                => $row['tips'] ?? '',
+        'createdAt'           => (int) $row['created_at'],
+    ];
 }
 
 // ── Router ─────────────────────────────────────────────────────────────────
@@ -539,6 +645,109 @@ if ($method === 'PUT' && count($segments) === 2 && $segments[0] === 'profile') {
         ON DUPLICATE KEY UPDATE name = VALUES(name), email = VALUES(email), activation_code = VALUES(activation_code), updated_at = VALUES(updated_at)
     ')->execute([$id, $name, $email, $activationCode, $now]);
     json_out(['id' => $id, 'name' => $name, 'email' => $email, 'activationCode' => $activationCode]);
+}
+
+// ── GET /profile/{profileId}/recipes ───────────────────────────────────────
+if ($method === 'GET' && count($segments) === 3 && $segments[0] === 'profile' && $segments[2] === 'recipes') {
+    $stmt = $db->prepare('SELECT * FROM recipes WHERE profile_id = ? ORDER BY created_at DESC');
+    $stmt->execute([$segments[1]]);
+    json_out(array_map('recipeToJson', $stmt->fetchAll()));
+}
+
+// ── PUT /profile/{profileId}/recipes/{id} ─────────────────────────────────
+if ($method === 'PUT' && count($segments) === 4 && $segments[0] === 'profile' && $segments[2] === 'recipes') {
+    [, $profileId, , $id] = $segments;
+    $now = nowMs();
+    $db->prepare('
+        INSERT INTO recipes (id, profile_id, name, description, rating, servings, nutrition_facts,
+            prep_time_minutes, total_time_minutes, durability, course_type,
+            ingredient_sections, instruction_sections, tips, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        ON DUPLICATE KEY UPDATE
+            name                 = VALUES(name),
+            description          = VALUES(description),
+            rating               = VALUES(rating),
+            servings             = VALUES(servings),
+            nutrition_facts      = VALUES(nutrition_facts),
+            prep_time_minutes    = VALUES(prep_time_minutes),
+            total_time_minutes   = VALUES(total_time_minutes),
+            durability           = VALUES(durability),
+            course_type          = VALUES(course_type),
+            ingredient_sections  = VALUES(ingredient_sections),
+            instruction_sections = VALUES(instruction_sections),
+            tips                 = VALUES(tips),
+            updated_at           = VALUES(updated_at)
+    ')->execute([
+        $id,
+        $profileId,
+        $body['name'] ?? '',
+        $body['description'] ?? '',
+        (int) ($body['rating'] ?? 0),
+        (int) ($body['servings'] ?? 0),
+        $body['nutritionFacts'] ?? '',
+        (int) ($body['prepTimeMinutes'] ?? 0),
+        (int) ($body['totalTimeMinutes'] ?? 0),
+        $body['durability'] ?? '',
+        $body['courseType'] ?? '',
+        json_encode($body['ingredientSections'] ?? [], JSON_UNESCAPED_UNICODE),
+        json_encode($body['instructionSections'] ?? [], JSON_UNESCAPED_UNICODE),
+        $body['tips'] ?? '',
+        $body['createdAt'] ?? $now,
+        $now,
+    ]);
+    $stmt = $db->prepare('SELECT * FROM recipes WHERE id = ?');
+    $stmt->execute([$id]);
+    json_out(recipeToJson($stmt->fetch()));
+}
+
+// ── DELETE /profile/{profileId}/recipes/{id} ──────────────────────────────
+if ($method === 'DELETE' && count($segments) === 4 && $segments[0] === 'profile' && $segments[2] === 'recipes') {
+    [, $profileId, , $id] = $segments;
+    $db->prepare('DELETE FROM recipes WHERE id = ? AND profile_id = ?')->execute([$id, $profileId]);
+    http_response_code(204);
+    exit;
+}
+
+// ── GET /profile/{profileId}/menu-plans ───────────────────────────────────
+if ($method === 'GET' && count($segments) === 3 && $segments[0] === 'profile' && $segments[2] === 'menu-plans') {
+    $stmt = $db->prepare('SELECT * FROM menu_plans WHERE profile_id = ? ORDER BY created_at DESC');
+    $stmt->execute([$segments[1]]);
+    json_out(array_map(fn($r) => menuPlanToJson($db, $r), $stmt->fetchAll()));
+}
+
+// ── PUT /profile/{profileId}/menu-plans/{id} ──────────────────────────────
+if ($method === 'PUT' && count($segments) === 4 && $segments[0] === 'profile' && $segments[2] === 'menu-plans') {
+    [, $profileId, , $id] = $segments;
+    $now = nowMs();
+    $recipeProgress = json_encode($body['recipeProgress'] ?? new \stdClass());
+    $db->prepare('
+        INSERT INTO menu_plans (id, profile_id, name, description, servings, recipe_progress, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)
+        ON DUPLICATE KEY UPDATE
+            name             = VALUES(name),
+            description      = VALUES(description),
+            servings         = VALUES(servings),
+            recipe_progress  = VALUES(recipe_progress),
+            updated_at       = VALUES(updated_at)
+    ')->execute([$id, $profileId, $body['name'] ?? '', $body['description'] ?? '', (int) ($body['servings'] ?? 0), $recipeProgress, $body['createdAt'] ?? $now, $now]);
+
+    $db->prepare('DELETE FROM menu_plan_recipes WHERE menu_plan_id = ?')->execute([$id]);
+    $recipeIds = $body['recipeIds'] ?? [];
+    $insertStmt = $db->prepare('INSERT INTO menu_plan_recipes (menu_plan_id, recipe_id, sort_order) VALUES (?,?,?)');
+    foreach ($recipeIds as $i => $recipeId) {
+        $insertStmt->execute([$id, $recipeId, $i]);
+    }
+
+    $stmt = $db->prepare('SELECT * FROM menu_plans WHERE id = ?');
+    $stmt->execute([$id]);
+    json_out(menuPlanToJson($db, $stmt->fetch()));
+}
+
+// ── DELETE /profile/{profileId}/menu-plans/{id} ───────────────────────────
+if ($method === 'DELETE' && count($segments) === 4 && $segments[0] === 'profile' && $segments[2] === 'menu-plans') {
+    [, $profileId, , $id] = $segments;
+    $db->prepare('DELETE FROM menu_plans WHERE id = ? AND profile_id = ?')->execute([$id, $profileId]);
+    http_response_code(204);
+    exit;
 }
 
 not_found();

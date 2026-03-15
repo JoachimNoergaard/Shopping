@@ -116,6 +116,36 @@ interface ShoppingApi {
 
     @DELETE("profile/{profileId}/catalog/{id}")
     suspend fun deleteCatalogItem(@Path("profileId") profileId: String, @Path("id") id: String)
+
+    // ── Menu plans ────────────────────────────────────────────────────────────
+
+    @GET("profile/{profileId}/menu-plans")
+    suspend fun getMenuPlans(@Path("profileId") profileId: String): List<ApiMenuPlan>
+
+    @PUT("profile/{profileId}/menu-plans/{id}")
+    suspend fun upsertMenuPlan(
+        @Path("profileId") profileId: String,
+        @Path("id") id: String,
+        @Body plan: UpsertMenuPlanRequest,
+    ): ApiMenuPlan
+
+    @DELETE("profile/{profileId}/menu-plans/{id}")
+    suspend fun deleteMenuPlan(@Path("profileId") profileId: String, @Path("id") id: String)
+
+    // ── Recipes ───────────────────────────────────────────────────────────────
+
+    @GET("profile/{profileId}/recipes")
+    suspend fun getRecipes(@Path("profileId") profileId: String): List<ApiRecipe>
+
+    @PUT("profile/{profileId}/recipes/{id}")
+    suspend fun upsertRecipe(
+        @Path("profileId") profileId: String,
+        @Path("id") id: String,
+        @Body recipe: UpsertRecipeRequest,
+    ): ApiRecipe
+
+    @DELETE("profile/{profileId}/recipes/{id}")
+    suspend fun deleteRecipe(@Path("profileId") profileId: String, @Path("id") id: String)
 }
 
 fun buildShoppingApi(): ShoppingApi {
