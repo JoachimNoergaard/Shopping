@@ -137,9 +137,14 @@ object ShoppingRepository {
         return plan.id
     }
 
-    fun updateMenuPlan(planId: String, name: String, servings: Int) {
+    fun updateMenuPlan(planId: String, name: String, description: String = "", servings: Int, recipeIds: List<String>? = null) {
         val updated = _menuPlans.value.map { plan ->
-            if (plan.id == planId) plan.copy(name = name, servings = servings) else plan
+            if (plan.id == planId) plan.copy(
+                name = name,
+                description = description,
+                servings = servings,
+                recipeIds = recipeIds ?: plan.recipeIds,
+            ) else plan
         }
         _menuPlans.value = updated
         saveMenuPlans(updated)

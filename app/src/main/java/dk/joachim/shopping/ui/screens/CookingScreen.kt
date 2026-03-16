@@ -85,8 +85,11 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import kotlin.math.roundToInt
 import dk.joachim.shopping.data.IngredientSection
 import dk.joachim.shopping.data.InstructionSection
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -309,9 +312,13 @@ fun CookingScreen(
     if (uiState.editingPlan != null) {
         EditMenuPlanDialog(
             name = uiState.editPlanName,
+            description = uiState.editPlanDescription,
             servings = uiState.editPlanServings,
+            recipes = uiState.editPlanRecipes,
             onNameChange = viewModel::updateEditPlanName,
+            onDescriptionChange = viewModel::updateEditPlanDescription,
             onServingsChange = viewModel::updateEditPlanServings,
+            onReorderRecipes = viewModel::reorderEditPlanRecipes,
             onSave = viewModel::saveEditPlan,
             onDelete = { viewModel.requestDeletePlan(uiState.editingPlan!!) },
             onDismiss = viewModel::dismissEditPlanDialog,
@@ -1516,6 +1523,14 @@ private fun MenuPlanCard(
 
         AnimatedVisibility(visible = isExpanded) {
             Column(modifier = Modifier.padding(start = 20.dp, end = 16.dp, bottom = 12.dp)) {
+                if (plan.description.isNotBlank()) {
+                    Text(
+                        text = plan.description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 12.dp),
+                    )
+                }
                 if (recipes.isEmpty()) {
                     Text(
                         text = "Ingen opskrifter tilknyttet",
@@ -1771,9 +1786,13 @@ private fun EmptyMenuPlansState(
 @Composable
 private fun EditMenuPlanDialog(
     name: String,
+    description: String,
     servings: Int,
+    recipes: List<Recipe>,
     onNameChange: (String) -> Unit,
+    onDescriptionChange: (String) -> Unit,
     onServingsChange: (Int) -> Unit,
+    onReorderRecipes: (Int, Int) -> Unit,
     onSave: () -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit,
@@ -1782,7 +1801,10 @@ private fun EditMenuPlanDialog(
         onDismissRequest = onDismiss,
         title = { Text("Rediger madplan") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+            ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = onNameChange,
@@ -1791,10 +1813,31 @@ private fun EditMenuPlanDialog(
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     modifier = Modifier.fillMaxWidth()
                 )
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = onDescriptionChange,
+                    label = { Text("Noter") },
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                    minLines = 2,
+                    maxLines = 4,
+                    modifier = Modifier.fillMaxWidth()
+                )
                 ServingsRow(
                     servings = servings,
                     onServingsChange = onServingsChange,
                 )
+                if (recipes.isNotEmpty()) {
+                    HorizontalDivider()
+                    Text(
+                        text = "Opskrifter",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    ReorderableRecipeList(
+                        recipes = recipes,
+                        onReorder = onReorderRecipes,
+                    )
+                }
                 HorizontalDivider()
                 TextButton(
                     onClick = onDelete,
@@ -1816,6 +1859,80 @@ private fun EditMenuPlanDialog(
             TextButton(onClick = onDismiss) { Text("Annuller") }
         }
     )
+}
+
+@Suppress("FunctionNaming")
+@Composable
+private fun ReorderableRecipeList(
+    recipes: List<Recipe>,
+    onReorder: (Int, Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var draggingIndex by remember { mutableStateOf<Int?>(null) }
+    var draggingOffsetY by remember { mutableFloatStateOf(0f) }
+    val itemHeightPx = with(LocalDensity.current) { 48.dp.toPx() }
+
+    Column(modifier = modifier) {
+        recipes.forEachIndexed { index, recipe ->
+            val isDragging = index == draggingIndex
+            val draggedTo = draggingIndex?.let { from ->
+                (from + (draggingOffsetY / itemHeightPx).roundToInt()).coerceIn(0, recipes.lastIndex)
+            }
+            val shiftY = when {
+                draggingIndex == null || isDragging -> 0f
+                draggingIndex!! < index && draggedTo != null && index <= draggedTo -> -itemHeightPx
+                draggingIndex!! > index && draggedTo != null && index >= draggedTo -> itemHeightPx
+                else -> 0f
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .zIndex(if (isDragging) 1f else 0f)
+                    .graphicsLayer {
+                        translationY = if (isDragging) draggingOffsetY else shiftY
+                        shadowElevation = if (isDragging) 8f else 0f
+                    }
+                    .background(
+                        if (isDragging) MaterialTheme.colorScheme.surfaceContainerHigh
+                        else Color.Transparent,
+                        RoundedCornerShape(8.dp),
+                    )
+                    .padding(horizontal = 4.dp),
+            ) {
+                Icon(
+                    Icons.Default.DragHandle,
+                    contentDescription = "Flyt",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(24.dp)
+                        .pointerInput(index) {
+                            detectDragGesturesAfterLongPress(
+                                onDragStart = { draggingIndex = index; draggingOffsetY = 0f },
+                                onDrag = { _, delta -> draggingOffsetY += delta.y },
+                                onDragEnd = {
+                                    val from = draggingIndex ?: return@detectDragGesturesAfterLongPress
+                                    val to = (from + (draggingOffsetY / itemHeightPx).roundToInt())
+                                        .coerceIn(0, recipes.lastIndex)
+                                    if (from != to) onReorder(from, to)
+                                    draggingIndex = null; draggingOffsetY = 0f
+                                },
+                                onDragCancel = { draggingIndex = null; draggingOffsetY = 0f },
+                            )
+                        },
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = recipe.name,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
 }
 
 @Suppress("FunctionNaming")

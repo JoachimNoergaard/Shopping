@@ -28,7 +28,9 @@ data class CookingUiState(
     val pendingDeletePlan: MenuPlan? = null,
     val editingPlan: MenuPlan? = null,
     val editPlanName: String = "",
+    val editPlanDescription: String = "",
     val editPlanServings: Int = 0,
+    val editPlanRecipeIds: List<String> = emptyList(),
     val showAddRecipeDialog: Boolean = false,
     val newRecipeName: String = "",
     val newRecipeDescription: String = "",
@@ -48,7 +50,10 @@ data class CookingUiState(
         else recipes.filter { it.name.contains(searchQuery, ignoreCase = true) }
 
     fun recipesForPlan(plan: MenuPlan): List<Recipe> =
-        recipes.filter { it.id in plan.recipeIds }
+        plan.recipeIds.mapNotNull { id -> recipes.find { it.id == id } }
+
+    val editPlanRecipes: List<Recipe>
+        get() = editPlanRecipeIds.mapNotNull { id -> recipes.find { it.id == id } }
 
     fun recipesNotInPlan(plan: MenuPlan): List<Recipe> =
         recipes.filter { it.id !in plan.recipeIds }
@@ -67,20 +72,22 @@ class CookingViewModel : ViewModel() {
         val newPlanDescription: String = "",
         val pendingDeletePlan: MenuPlan? = null,
         val editingPlan: MenuPlan? = null,
-        val editPlanName: String = "",
-        val editPlanServings: Int = 0,
-        val showAddRecipeDialog: Boolean = false,
-        val newRecipeName: String = "",
-        val newRecipeDescription: String = "",
-        val pendingDeleteRecipe: Recipe? = null,
-        val expandedPlanId: String? = null,
-        val viewingRecipe: Recipe? = null,
-        val viewingMenuPlanId: String? = null,
-        val editingRecipe: Recipe? = null,
-        val showImportRecipeDialog: Boolean = false,
-        val importRecipeName: String = "",
-        val importRecipeIngredients: String = "",
-        val importRecipeInstructions: String = "",
+    val editPlanName: String = "",
+    val editPlanDescription: String = "",
+    val editPlanServings: Int = 0,
+    val editPlanRecipeIds: List<String> = emptyList(),
+    val showAddRecipeDialog: Boolean = false,
+    val newRecipeName: String = "",
+    val newRecipeDescription: String = "",
+    val pendingDeleteRecipe: Recipe? = null,
+    val expandedPlanId: String? = null,
+    val viewingRecipe: Recipe? = null,
+    val viewingMenuPlanId: String? = null,
+    val editingRecipe: Recipe? = null,
+    val showImportRecipeDialog: Boolean = false,
+    val importRecipeName: String = "",
+    val importRecipeIngredients: String = "",
+    val importRecipeInstructions: String = "",
     )
 
     private val _extra = MutableStateFlow(ExtraState())
@@ -102,7 +109,9 @@ class CookingViewModel : ViewModel() {
             pendingDeletePlan = extra.pendingDeletePlan,
             editingPlan = extra.editingPlan,
             editPlanName = extra.editPlanName,
+            editPlanDescription = extra.editPlanDescription,
             editPlanServings = extra.editPlanServings,
+            editPlanRecipeIds = extra.editPlanRecipeIds,
             showAddRecipeDialog = extra.showAddRecipeDialog,
             newRecipeName = extra.newRecipeName,
             newRecipeDescription = extra.newRecipeDescription,
@@ -154,22 +163,43 @@ class CookingViewModel : ViewModel() {
     }
 
     fun requestEditPlan(plan: MenuPlan) = _extra.update {
-        it.copy(editingPlan = plan, editPlanName = plan.name, editPlanServings = plan.servings)
+        it.copy(
+            editingPlan = plan,
+            editPlanName = plan.name,
+            editPlanDescription = plan.description,
+            editPlanServings = plan.servings,
+            editPlanRecipeIds = plan.recipeIds,
+        )
     }
 
     fun dismissEditPlanDialog() = _extra.update {
-        it.copy(editingPlan = null, editPlanName = "", editPlanServings = 0)
+        it.copy(editingPlan = null, editPlanName = "", editPlanDescription = "", editPlanServings = 0, editPlanRecipeIds = emptyList())
     }
 
     fun updateEditPlanName(name: String) = _extra.update { it.copy(editPlanName = name) }
+    fun updateEditPlanDescription(desc: String) = _extra.update { it.copy(editPlanDescription = desc) }
     fun updateEditPlanServings(servings: Int) = _extra.update { it.copy(editPlanServings = servings) }
 
     fun saveEditPlan() {
         val plan = _extra.value.editingPlan ?: return
         val name = _extra.value.editPlanName.trim()
         if (name.isBlank()) return
-        repository.updateMenuPlan(plan.id, name, _extra.value.editPlanServings)
-        _extra.update { it.copy(editingPlan = null, editPlanName = "", editPlanServings = 0) }
+        repository.updateMenuPlan(
+            plan.id, name, _extra.value.editPlanDescription.trim(),
+            _extra.value.editPlanServings, _extra.value.editPlanRecipeIds,
+        )
+        _extra.update {
+            it.copy(editingPlan = null, editPlanName = "", editPlanDescription = "", editPlanServings = 0, editPlanRecipeIds = emptyList())
+        }
+    }
+
+    fun reorderEditPlanRecipes(from: Int, to: Int) {
+        _extra.update { state ->
+            val ids = state.editPlanRecipeIds.toMutableList()
+            val item = ids.removeAt(from)
+            ids.add(to, item)
+            state.copy(editPlanRecipeIds = ids)
+        }
     }
 
     // ── Recipe dialogs ────────────────────────────────────────────────────────
@@ -278,7 +308,7 @@ class CookingViewModel : ViewModel() {
             courseType = recipe.courseType.trim(),
             durability = recipe.durability.trim(),
             nutritionFacts = recipe.nutritionFacts.trim(),
-            tips = recipe.tips.trim(),
+            tips = recipe.tips,
             ingredientSections = recipe.ingredientSections.map { s ->
                 s.copy(
                     title = s.title.trim(),
@@ -465,7 +495,7 @@ class CookingViewModel : ViewModel() {
         repository.removeRecipeFromMenuPlan(planId, recipeId)
 
     fun updateMenuPlan(planId: String, name: String, servings: Int) =
-        repository.updateMenuPlan(planId, name, servings)
+        repository.updateMenuPlan(planId, name, servings = servings)
 
     fun togglePlanExpanded(planId: String) = _extra.update {
         it.copy(expandedPlanId = if (it.expandedPlanId == planId) null else planId)
