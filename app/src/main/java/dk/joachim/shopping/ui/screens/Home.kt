@@ -67,6 +67,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dk.joachim.shopping.R
 import dk.joachim.shopping.data.GroceryList
+import dk.joachim.shopping.data.ShoppingRepository
+import dk.joachim.shopping.data.ShoppingRepository.LAST_MAIN_SECTION_COOKING
+import dk.joachim.shopping.data.ShoppingRepository.LAST_MAIN_SECTION_GROCERY_HOME
 
 @Suppress("LongParameterList", "LongMethod", "FunctionNaming")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -82,7 +85,11 @@ fun GroceryListsScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     var showMenu by remember { mutableStateOf(false) }
-    var selectedTab by remember { mutableIntStateOf(0) }
+    var selectedTab by remember {
+        mutableIntStateOf(
+            if (ShoppingRepository.getLastMainSection() == LAST_MAIN_SECTION_COOKING) 1 else 0
+        )
+    }
 
     val cookingViewModel: CookingViewModel = viewModel()
     val cookingUiState by cookingViewModel.uiState.collectAsStateWithLifecycle()
@@ -182,7 +189,10 @@ fun GroceryListsScreen(
                 NavigationBar {
                     NavigationBarItem(
                         selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
+                        onClick = {
+                            selectedTab = 0
+                            ShoppingRepository.saveLastMainSection(LAST_MAIN_SECTION_GROCERY_HOME)
+                        },
                         icon = {
                             Icon(
                                 imageVector = Icons.Default.ShoppingCart,
@@ -193,7 +203,10 @@ fun GroceryListsScreen(
                     )
                     NavigationBarItem(
                         selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
+                        onClick = {
+                            selectedTab = 1
+                            ShoppingRepository.saveLastMainSection(LAST_MAIN_SECTION_COOKING)
+                        },
                         icon = {
                             Icon(
                                 imageVector = Icons.Default.Restaurant,

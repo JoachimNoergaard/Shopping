@@ -23,6 +23,9 @@ data class GroceryListUiState(
     val newItemName: String = "",
     val newItemQuantity: String = "",
     val newItemCategory: UserCategory? = null,
+    val newItemWeekday: String? = null,
+    val newItemPrice: String = "",
+    val newItemSupermarket: String? = null,
     val userCategories: List<UserCategory> = emptyList(),
     val catalogItems: List<CatalogItem> = emptyList(),
     val shops: List<Shop> = emptyList(),
@@ -60,6 +63,9 @@ class GroceryListViewModel(savedStateHandle: SavedStateHandle) : ViewModel() {
         val name: String = "",
         val quantity: String = "1",
         val category: UserCategory? = null,
+        val weekday: String? = null,
+        val price: String = "",
+        val supermarket: String? = null,
         val itemAddedCount: Int = 0,
     )
     private val _dialog = MutableStateFlow(DialogState())
@@ -78,6 +84,9 @@ class GroceryListViewModel(savedStateHandle: SavedStateHandle) : ViewModel() {
             newItemName = dialog.name,
             newItemQuantity = dialog.quantity,
             newItemCategory = dialog.category,
+            newItemWeekday = dialog.weekday,
+            newItemPrice = dialog.price,
+            newItemSupermarket = dialog.supermarket,
             userCategories = categories,
             catalogItems = catalog,
             shops = shops,
@@ -96,6 +105,8 @@ class GroceryListViewModel(savedStateHandle: SavedStateHandle) : ViewModel() {
     fun adjustItemQuantity(itemId: String, delta: Int) = repository.adjustItemQuantity(listId, itemId, delta)
     fun setItemQuantity(itemId: String, quantity: String) = repository.setItemQuantity(listId, itemId, quantity)
     fun updateItemComment(itemId: String, comment: String?) = repository.updateItemComment(listId, itemId, comment)
+    fun updateItemCategory(itemId: String, categoryId: String) =
+        repository.updateItemCategory(listId, itemId, categoryId)
     fun updateItemName(itemId: String, name: String) = repository.updateItemName(listId, itemId, name)
 
     // ── Add-item dialog ────────────────────────────────────────────────────
@@ -107,15 +118,34 @@ class GroceryListViewModel(savedStateHandle: SavedStateHandle) : ViewModel() {
     fun updateNewItemName(name: String) = _dialog.update { it.copy(name = name) }
     fun updateNewItemQuantity(quantity: String) = _dialog.update { it.copy(quantity = quantity) }
     fun updateNewItemCategory(category: UserCategory) = _dialog.update { it.copy(category = category) }
+    fun updateNewItemWeekday(weekday: String?) = _dialog.update { it.copy(weekday = weekday) }
+    fun updateNewItemPrice(price: String) = _dialog.update { it.copy(price = price) }
+    fun updateNewItemSupermarket(supermarket: String?) = _dialog.update { it.copy(supermarket = supermarket) }
 
     fun fillFromSuggestion(item: GroceryItem) {
         val category = _userCategories.value.firstOrNull { it.id == item.category }
-        _dialog.update { it.copy(name = item.name, category = category) }
+        _dialog.update {
+            it.copy(
+                name = item.name,
+                category = category,
+                weekday = item.weekday,
+                price = item.price ?: "",
+                supermarket = item.supermarket,
+            )
+        }
     }
 
     fun fillFromCatalogSuggestion(item: CatalogItem) {
         val category = _userCategories.value.firstOrNull { it.id == item.category }
-        _dialog.update { it.copy(name = item.name, category = category) }
+        _dialog.update {
+            it.copy(
+                name = item.name,
+                category = category,
+                weekday = null,
+                price = "",
+                supermarket = null,
+            )
+        }
     }
 
     companion object {
@@ -127,8 +157,26 @@ class GroceryListViewModel(savedStateHandle: SavedStateHandle) : ViewModel() {
         if (dialog.name.isBlank()) return
         // Allow adding without a category when none exist yet
         if (dialog.category == null && _userCategories.value.isNotEmpty()) return
-        repository.addOrMergeItem(listId, dialog.name, dialog.quantity, dialog.category?.id ?: "")
-        _dialog.update { it.copy(name = "", quantity = "1", category = null, itemAddedCount = it.itemAddedCount + 1) }
+        repository.addOrMergeItem(
+            listId,
+            dialog.name,
+            dialog.quantity,
+            dialog.category?.id ?: "",
+            weekday = dialog.weekday,
+            price = dialog.price.ifBlank { null },
+            supermarket = dialog.supermarket,
+        )
+        _dialog.update {
+            it.copy(
+                name = "",
+                quantity = "1",
+                category = null,
+                weekday = null,
+                price = "",
+                supermarket = null,
+                itemAddedCount = it.itemAddedCount + 1,
+            )
+        }
     }
 
     fun deleteCheckedItems() {

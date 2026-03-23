@@ -11,6 +11,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import dk.joachim.shopping.data.ShoppingRepository
+import dk.joachim.shopping.data.ShoppingRepository.LAST_MAIN_SECTION_COOKING
+import dk.joachim.shopping.data.ShoppingRepository.LAST_MAIN_SECTION_GROCERY_HOME
+import dk.joachim.shopping.data.ShoppingRepository.LAST_MAIN_SECTION_GROCERY_LIST
 import dk.joachim.shopping.ui.screens.CatalogItemsScreen
 import dk.joachim.shopping.ui.screens.CategoriesScreen
 import dk.joachim.shopping.ui.screens.GroceryListScreen
@@ -36,19 +39,30 @@ class MainActivity : ComponentActivity() {
 private fun ShoppingNavHost() {
     val onboardingDone = remember { ShoppingRepository.isOnboardingDone() }
 
-    // Validate the last list ID still refers to an existing list
-    val lastListId = remember {
-        if (!onboardingDone) return@remember null
-        val id = ShoppingRepository.getLastListId()
-        if (id != null && ShoppingRepository.lists.value.any { it.id == id }) id else null
-    }
-
     val navController = rememberNavController()
 
-    // Navigate to the last list immediately after first composition (only when onboarding is done)
+    // Cold start: only deep-link into a list when last session was that list (not Madlavning / Indkøb overview).
     LaunchedEffect(Unit) {
-        if (lastListId != null) {
-            navController.navigate("list/$lastListId")
+        if (!onboardingDone) return@LaunchedEffect
+        val section = ShoppingRepository.getLastMainSection()
+        val lastListId = ShoppingRepository.getLastListId()?.takeIf { id ->
+            ShoppingRepository.lists.value.any { it.id == id }
+        }
+        when (section) {
+            LAST_MAIN_SECTION_GROCERY_LIST -> if (lastListId != null) {
+                navController.navigate("list/$lastListId") {
+                    launchSingleTop = true
+                }
+            }
+            LAST_MAIN_SECTION_COOKING, LAST_MAIN_SECTION_GROCERY_HOME -> Unit
+            null -> if (lastListId != null) {
+                // Legacy installs: no section key yet — keep opening the last list once.
+                navController.navigate("list/$lastListId") {
+                    launchSingleTop = true
+                }
+                ShoppingRepository.saveLastMainSection(LAST_MAIN_SECTION_GROCERY_LIST)
+            }
+            else -> Unit
         }
     }
 
@@ -68,6 +82,7 @@ private fun ShoppingNavHost() {
             GroceryListsScreen(
                 onNavigateToList = { listId ->
                     ShoppingRepository.saveLastListId(listId)
+                    ShoppingRepository.saveLastMainSection(LAST_MAIN_SECTION_GROCERY_LIST)
                     navController.navigate("list/$listId")
                 },
                 onNavigateToProfile = { navController.navigate("profile") },
@@ -78,7 +93,10 @@ private fun ShoppingNavHost() {
         }
         composable("list/{listId}") {
             GroceryListScreen(
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = {
+                    ShoppingRepository.saveLastMainSection(LAST_MAIN_SECTION_GROCERY_HOME)
+                    navController.popBackStack()
+                }
             )
         }
         composable("profile") {

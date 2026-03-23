@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -25,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -35,6 +37,7 @@ import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Star
@@ -70,6 +73,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -97,6 +101,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import dk.joachim.shopping.data.CompletedStep
 import dk.joachim.shopping.data.Ingredient
 import dk.joachim.shopping.data.MenuPlan
+import dk.joachim.shopping.data.capitalizeIngredientFirstLetter
 import dk.joachim.shopping.data.Recipe
 
 @Suppress("LongMethod", "FunctionNaming")
@@ -212,12 +217,20 @@ fun CookingScreen(
                                 onToggleExpand = { viewModel.togglePlanExpanded(plan.id) },
                                 onEditPlan = { viewModel.requestEditPlan(plan) },
                                 onRemoveRecipe = { recipeId ->
-                                    viewModel.removeRecipeFromMenuPlan(
+                                    viewModel.requestRemoveRecipeFromMenuPlan(
                                         plan.id,
                                         recipeId
                                     )
                                 },
-                                onEditRecipe = { recipe -> viewModel.openRecipeViewer(recipe, plan.id) },
+                                onEditRecipe = { recipe ->
+                                    viewModel.openRecipeViewer(
+                                        recipe,
+                                        plan.id
+                                    )
+                                },
+                                groceryListName = uiState.targetGroceryListName,
+                                canAddToGroceryList = uiState.canAddIngredientsToGroceryList,
+                                onAddIngredientToGroceryList = viewModel::addMergedIngredientToGroceryList,
                             )
                         }
                     }
@@ -338,6 +351,26 @@ fun CookingScreen(
             },
             dismissButton = {
                 TextButton(onClick = viewModel::dismissDeleteRecipeDialog) { Text("Annuller") }
+            }
+        )
+    }
+
+    uiState.pendingRemoveRecipeFromPlan?.let { pending ->
+        AlertDialog(
+            onDismissRequest = viewModel::dismissRemoveRecipeFromMenuPlanDialog,
+            title = { Text("Vil du fjerne opskriften?") },
+            text = {
+                Text(
+                    "\"${pending.recipeName}\" fjernes fra \"${pending.planName}\". Opskriften slettes ikke."
+                )
+            },
+            confirmButton = {
+                Button(onClick = viewModel::confirmRemoveRecipeFromMenuPlan) { Text("Fjern") }
+            },
+            dismissButton = {
+                TextButton(onClick = viewModel::dismissRemoveRecipeFromMenuPlanDialog) {
+                    Text("Annuller")
+                }
             }
         )
     }
@@ -724,7 +757,7 @@ private fun RecipeDetailScreen(
                                 )
                             }
                             Text(
-                                text = ingredient.name,
+                                text = ingredient.name.capitalizeIngredientFirstLetter(),
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
@@ -749,7 +782,7 @@ private fun RecipeDetailScreen(
                     }
                     section.steps.forEachIndexed { idx, step ->
                         val isDone = showStepProgress &&
-                            completedSteps.any { it.sectionIndex == sIdx && it.stepIndex == idx }
+                                completedSteps.any { it.sectionIndex == sIdx && it.stepIndex == idx }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -761,7 +794,7 @@ private fun RecipeDetailScreen(
                             verticalAlignment = Alignment.Top,
                         ) {
                             val circleColor = if (isDone) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.outlineVariant
+                            else MaterialTheme.colorScheme.outlineVariant
                             Box(
                                 modifier = Modifier
                                     .size(28.dp)
@@ -795,7 +828,7 @@ private fun RecipeDetailScreen(
                                     else s
                                 },
                                 color = if (isDone) MaterialTheme.colorScheme.onSurfaceVariant
-                                    else MaterialTheme.colorScheme.onSurface,
+                                else MaterialTheme.colorScheme.onSurface,
                             )
                         }
                     }
@@ -901,11 +934,13 @@ private fun RatingBar(rating: Int, onRatingChange: (Int) -> Unit) {
 
 private sealed interface FlatIngredientItem {
     val id: Int
+
     data class SectionHeader(override val id: Int, val sIdx: Int) : FlatIngredientItem
     data class Entry(
         override val id: Int,
         val ingredient: Ingredient,
     ) : FlatIngredientItem
+
     data class AddButton(override val id: Int, val sIdx: Int) : FlatIngredientItem
 }
 
@@ -931,7 +966,9 @@ private fun rebuildSections(
     for (item in flatList) {
         when (item) {
             is FlatIngredientItem.SectionHeader -> currentSection = item.sIdx
-            is FlatIngredientItem.Entry -> map.getOrPut(currentSection) { mutableListOf() }.add(item.ingredient)
+            is FlatIngredientItem.Entry -> map.getOrPut(currentSection) { mutableListOf() }
+                .add(item.ingredient)
+
             is FlatIngredientItem.AddButton -> {}
         }
     }
@@ -991,7 +1028,11 @@ private fun DraggableIngredientSections(
                                 modifier = Modifier.weight(1f)
                             )
                             IconButton(onClick = { onRemoveSection(item.sIdx) }) {
-                                Icon(Icons.Default.Delete, "Fjern sektion", modifier = Modifier.size(20.dp))
+                                Icon(
+                                    Icons.Default.Delete,
+                                    "Fjern sektion",
+                                    modifier = Modifier.size(20.dp)
+                                )
                             }
                         }
                     }
@@ -1003,12 +1044,20 @@ private fun DraggableIngredientSections(
                             var iInSection = 0
                             for (j in 0 until idx) {
                                 when (activeFlat[j]) {
-                                    is FlatIngredientItem.SectionHeader -> { s = (activeFlat[j] as FlatIngredientItem.SectionHeader).sIdx; iInSection = 0 }
+                                    is FlatIngredientItem.SectionHeader -> {
+                                        s =
+                                            (activeFlat[j] as FlatIngredientItem.SectionHeader).sIdx; iInSection =
+                                            0
+                                    }
+
                                     is FlatIngredientItem.Entry -> iInSection++
                                     is FlatIngredientItem.AddButton -> {}
                                 }
                             }
                             s to iInSection
+                        }
+                        var hadIngredientNameFocus by remember(sectionAndIndex.first, sectionAndIndex.second) {
+                            mutableStateOf(false)
                         }
 
                         Row(
@@ -1046,22 +1095,32 @@ private fun DraggableIngredientSections(
                                                 change.consume()
                                                 dragOffsetY += offset.y
 
-                                                val di = dragIdx ?: return@detectDragGesturesAfterLongPress
-                                                val myCenter = (itemY[di] ?: 0f) + (itemH[di] ?: 0) / 2f + dragOffsetY
+                                                val di = dragIdx
+                                                    ?: return@detectDragGesturesAfterLongPress
+                                                val myCenter = (itemY[di] ?: 0f) + (itemH[di]
+                                                    ?: 0) / 2f + dragOffsetY
 
                                                 if (dragOffsetY > 0f) {
                                                     val nextIdx = di + 1
                                                     if (nextIdx in localFlat.indices) {
-                                                        val nextCenter = (itemY[nextIdx] ?: 0f) + (itemH[nextIdx] ?: 0) / 2f
+                                                        val nextCenter =
+                                                            (itemY[nextIdx] ?: 0f) + (itemH[nextIdx]
+                                                                ?: 0) / 2f
                                                         if (myCenter > nextCenter) {
                                                             val items = localFlat.toMutableList()
                                                             val entry = items.removeAt(di)
                                                             items.add(nextIdx, entry)
                                                             localFlat = items
-                                                            dragOffsetY -= (itemY[nextIdx] ?: 0f) - (itemY[di] ?: 0f)
-                                                            val tmpY = itemY[di]; val tmpH = itemH[di]
-                                                            itemY[di] = itemY[nextIdx] ?: 0f; itemH[di] = itemH[nextIdx] ?: 0
-                                                            itemY[nextIdx] = tmpY ?: 0f; itemH[nextIdx] = tmpH ?: 0
+                                                            dragOffsetY -= (itemY[nextIdx]
+                                                                ?: 0f) - (itemY[di] ?: 0f)
+                                                            val tmpY = itemY[di];
+                                                            val tmpH = itemH[di]
+                                                            itemY[di] =
+                                                                itemY[nextIdx] ?: 0f; itemH[di] =
+                                                                itemH[nextIdx] ?: 0
+                                                            itemY[nextIdx] =
+                                                                tmpY ?: 0f; itemH[nextIdx] =
+                                                                tmpH ?: 0
                                                             dragIdx = nextIdx
                                                         }
                                                     }
@@ -1070,23 +1129,36 @@ private fun DraggableIngredientSections(
                                                 if (dragOffsetY < 0f) {
                                                     val prevIdx = di - 1
                                                     if (prevIdx in localFlat.indices) {
-                                                        val prevCenter = (itemY[prevIdx] ?: 0f) + (itemH[prevIdx] ?: 0) / 2f
+                                                        val prevCenter =
+                                                            (itemY[prevIdx] ?: 0f) + (itemH[prevIdx]
+                                                                ?: 0) / 2f
                                                         if (myCenter < prevCenter) {
                                                             val items = localFlat.toMutableList()
                                                             val entry = items.removeAt(di)
                                                             items.add(prevIdx, entry)
                                                             localFlat = items
-                                                            dragOffsetY += (itemY[di] ?: 0f) - (itemY[prevIdx] ?: 0f)
-                                                            val tmpY = itemY[di]; val tmpH = itemH[di]
-                                                            itemY[di] = itemY[prevIdx] ?: 0f; itemH[di] = itemH[prevIdx] ?: 0
-                                                            itemY[prevIdx] = tmpY ?: 0f; itemH[prevIdx] = tmpH ?: 0
+                                                            dragOffsetY += (itemY[di]
+                                                                ?: 0f) - (itemY[prevIdx] ?: 0f)
+                                                            val tmpY = itemY[di];
+                                                            val tmpH = itemH[di]
+                                                            itemY[di] =
+                                                                itemY[prevIdx] ?: 0f; itemH[di] =
+                                                                itemH[prevIdx] ?: 0
+                                                            itemY[prevIdx] =
+                                                                tmpY ?: 0f; itemH[prevIdx] =
+                                                                tmpH ?: 0
                                                             dragIdx = prevIdx
                                                         }
                                                     }
                                                 }
                                             },
                                             onDragEnd = {
-                                                currentOnReorder(rebuildSections(localFlat, currentSections))
+                                                currentOnReorder(
+                                                    rebuildSections(
+                                                        localFlat,
+                                                        currentSections
+                                                    )
+                                                )
                                                 dragIdx = null
                                                 isDragging = false
                                                 dragOffsetY = 0f
@@ -1103,8 +1175,10 @@ private fun DraggableIngredientSections(
                             OutlinedTextField(
                                 value = item.ingredient.quantity.ifBlank { " " },
                                 onValueChange = {
-                                    onUpdateIngredient(sectionAndIndex.first, sectionAndIndex.second,
-                                        item.ingredient.copy(quantity = it.trimStart()))
+                                    onUpdateIngredient(
+                                        sectionAndIndex.first, sectionAndIndex.second,
+                                        item.ingredient.copy(quantity = it.trimStart())
+                                    )
                                 },
                                 label = { Text("Mgd") },
                                 singleLine = true,
@@ -1113,8 +1187,10 @@ private fun DraggableIngredientSections(
                             OutlinedTextField(
                                 value = item.ingredient.unit.ifBlank { " " },
                                 onValueChange = {
-                                    onUpdateIngredient(sectionAndIndex.first, sectionAndIndex.second,
-                                        item.ingredient.copy(unit = it.trimStart()))
+                                    onUpdateIngredient(
+                                        sectionAndIndex.first, sectionAndIndex.second,
+                                        item.ingredient.copy(unit = it.trimStart())
+                                    )
                                 },
                                 label = { Text("Enh") },
                                 singleLine = true,
@@ -1123,16 +1199,40 @@ private fun DraggableIngredientSections(
                             OutlinedTextField(
                                 value = item.ingredient.name.ifBlank { " " },
                                 onValueChange = {
-                                    onUpdateIngredient(sectionAndIndex.first, sectionAndIndex.second,
-                                        item.ingredient.copy(name = it.trimStart()))
+                                    onUpdateIngredient(
+                                        sectionAndIndex.first, sectionAndIndex.second,
+                                        item.ingredient.copy(name = it.trimStart())
+                                    )
                                 },
                                 label = { Text("Ingrediens") },
                                 singleLine = true,
-                                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                                modifier = Modifier.weight(0.6f)
+                                keyboardOptions = KeyboardOptions(
+                                    capitalization = KeyboardCapitalization.None
+                                ),
+                                modifier = Modifier
+                                    .weight(0.6f)
+                                    .onFocusChanged { focusState ->
+                                        if (hadIngredientNameFocus && !focusState.isFocused) {
+                                            val trimmed = item.ingredient.name.trim()
+                                            val normalized = trimmed.capitalizeIngredientFirstLetter()
+                                            if (normalized != trimmed) {
+                                                onUpdateIngredient(
+                                                    sectionAndIndex.first,
+                                                    sectionAndIndex.second,
+                                                    item.ingredient.copy(name = normalized)
+                                                )
+                                            }
+                                        }
+                                        hadIngredientNameFocus = focusState.isFocused
+                                    }
                             )
                             IconButton(
-                                onClick = { onRemoveIngredient(sectionAndIndex.first, sectionAndIndex.second) },
+                                onClick = {
+                                    onRemoveIngredient(
+                                        sectionAndIndex.first,
+                                        sectionAndIndex.second
+                                    )
+                                },
                                 modifier = Modifier.size(32.dp)
                             ) {
                                 Icon(Icons.Default.Close, "Fjern", modifier = Modifier.size(16.dp))
@@ -1149,7 +1249,11 @@ private fun DraggableIngredientSections(
                                 itemH[idx] = c.size.height
                             }
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Tilføj ingrediens", style = MaterialTheme.typography.bodySmall)
                         }
@@ -1162,6 +1266,7 @@ private fun DraggableIngredientSections(
 
 private sealed interface FlatInstructionItem {
     val id: Int
+
     data class SectionHeader(override val id: Int, val sIdx: Int) : FlatInstructionItem
     data class StepEntry(override val id: Int, val step: String) : FlatInstructionItem
     data class AddButton(override val id: Int, val sIdx: Int) : FlatInstructionItem
@@ -1189,7 +1294,9 @@ private fun rebuildInstructionSections(
     for (item in flatList) {
         when (item) {
             is FlatInstructionItem.SectionHeader -> currentSection = item.sIdx
-            is FlatInstructionItem.StepEntry -> map.getOrPut(currentSection) { mutableListOf() }.add(item.step)
+            is FlatInstructionItem.StepEntry -> map.getOrPut(currentSection) { mutableListOf() }
+                .add(item.step)
+
             is FlatInstructionItem.AddButton -> {}
         }
     }
@@ -1249,7 +1356,11 @@ private fun DraggableInstructionSections(
                                 modifier = Modifier.weight(1f)
                             )
                             IconButton(onClick = { onRemoveSection(item.sIdx) }) {
-                                Icon(Icons.Default.Delete, "Fjern sektion", modifier = Modifier.size(20.dp))
+                                Icon(
+                                    Icons.Default.Delete,
+                                    "Fjern sektion",
+                                    modifier = Modifier.size(20.dp)
+                                )
                             }
                         }
                     }
@@ -1261,7 +1372,12 @@ private fun DraggableInstructionSections(
                             var iInSection = 0
                             for (j in 0 until idx) {
                                 when (activeFlat[j]) {
-                                    is FlatInstructionItem.SectionHeader -> { s = (activeFlat[j] as FlatInstructionItem.SectionHeader).sIdx; iInSection = 0 }
+                                    is FlatInstructionItem.SectionHeader -> {
+                                        s =
+                                            (activeFlat[j] as FlatInstructionItem.SectionHeader).sIdx; iInSection =
+                                            0
+                                    }
+
                                     is FlatInstructionItem.StepEntry -> iInSection++
                                     is FlatInstructionItem.AddButton -> {}
                                 }
@@ -1310,22 +1426,32 @@ private fun DraggableInstructionSections(
                                                 change.consume()
                                                 dragOffsetY += offset.y
 
-                                                val di = dragIdx ?: return@detectDragGesturesAfterLongPress
-                                                val myCenter = (itemY[di] ?: 0f) + (itemH[di] ?: 0) / 2f + dragOffsetY
+                                                val di = dragIdx
+                                                    ?: return@detectDragGesturesAfterLongPress
+                                                val myCenter = (itemY[di] ?: 0f) + (itemH[di]
+                                                    ?: 0) / 2f + dragOffsetY
 
                                                 if (dragOffsetY > 0f) {
                                                     val nextIdx = di + 1
                                                     if (nextIdx in localFlat.indices) {
-                                                        val nextCenter = (itemY[nextIdx] ?: 0f) + (itemH[nextIdx] ?: 0) / 2f
+                                                        val nextCenter =
+                                                            (itemY[nextIdx] ?: 0f) + (itemH[nextIdx]
+                                                                ?: 0) / 2f
                                                         if (myCenter > nextCenter) {
                                                             val items = localFlat.toMutableList()
                                                             val entry = items.removeAt(di)
                                                             items.add(nextIdx, entry)
                                                             localFlat = items
-                                                            dragOffsetY -= (itemY[nextIdx] ?: 0f) - (itemY[di] ?: 0f)
-                                                            val tmpY = itemY[di]; val tmpH = itemH[di]
-                                                            itemY[di] = itemY[nextIdx] ?: 0f; itemH[di] = itemH[nextIdx] ?: 0
-                                                            itemY[nextIdx] = tmpY ?: 0f; itemH[nextIdx] = tmpH ?: 0
+                                                            dragOffsetY -= (itemY[nextIdx]
+                                                                ?: 0f) - (itemY[di] ?: 0f)
+                                                            val tmpY = itemY[di];
+                                                            val tmpH = itemH[di]
+                                                            itemY[di] =
+                                                                itemY[nextIdx] ?: 0f; itemH[di] =
+                                                                itemH[nextIdx] ?: 0
+                                                            itemY[nextIdx] =
+                                                                tmpY ?: 0f; itemH[nextIdx] =
+                                                                tmpH ?: 0
                                                             dragIdx = nextIdx
                                                         }
                                                     }
@@ -1334,23 +1460,36 @@ private fun DraggableInstructionSections(
                                                 if (dragOffsetY < 0f) {
                                                     val prevIdx = di - 1
                                                     if (prevIdx in localFlat.indices) {
-                                                        val prevCenter = (itemY[prevIdx] ?: 0f) + (itemH[prevIdx] ?: 0) / 2f
+                                                        val prevCenter =
+                                                            (itemY[prevIdx] ?: 0f) + (itemH[prevIdx]
+                                                                ?: 0) / 2f
                                                         if (myCenter < prevCenter) {
                                                             val items = localFlat.toMutableList()
                                                             val entry = items.removeAt(di)
                                                             items.add(prevIdx, entry)
                                                             localFlat = items
-                                                            dragOffsetY += (itemY[di] ?: 0f) - (itemY[prevIdx] ?: 0f)
-                                                            val tmpY = itemY[di]; val tmpH = itemH[di]
-                                                            itemY[di] = itemY[prevIdx] ?: 0f; itemH[di] = itemH[prevIdx] ?: 0
-                                                            itemY[prevIdx] = tmpY ?: 0f; itemH[prevIdx] = tmpH ?: 0
+                                                            dragOffsetY += (itemY[di]
+                                                                ?: 0f) - (itemY[prevIdx] ?: 0f)
+                                                            val tmpY = itemY[di];
+                                                            val tmpH = itemH[di]
+                                                            itemY[di] =
+                                                                itemY[prevIdx] ?: 0f; itemH[di] =
+                                                                itemH[prevIdx] ?: 0
+                                                            itemY[prevIdx] =
+                                                                tmpY ?: 0f; itemH[prevIdx] =
+                                                                tmpH ?: 0
                                                             dragIdx = prevIdx
                                                         }
                                                     }
                                                 }
                                             },
                                             onDragEnd = {
-                                                currentOnReorder(rebuildInstructionSections(localFlat, currentSections))
+                                                currentOnReorder(
+                                                    rebuildInstructionSections(
+                                                        localFlat,
+                                                        currentSections
+                                                    )
+                                                )
                                                 dragIdx = null
                                                 isDragging = false
                                                 dragOffsetY = 0f
@@ -1372,14 +1511,23 @@ private fun DraggableInstructionSections(
                             OutlinedTextField(
                                 value = item.step.ifBlank { " " },
                                 onValueChange = {
-                                    onUpdateStep(sectionAndIndex.first, sectionAndIndex.second, it.trimStart())
+                                    onUpdateStep(
+                                        sectionAndIndex.first,
+                                        sectionAndIndex.second,
+                                        it.trimStart()
+                                    )
                                 },
                                 label = { Text("Trin $stepNumber") },
                                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                                 modifier = Modifier.weight(1f)
                             )
                             IconButton(
-                                onClick = { onRemoveStep(sectionAndIndex.first, sectionAndIndex.second) },
+                                onClick = {
+                                    onRemoveStep(
+                                        sectionAndIndex.first,
+                                        sectionAndIndex.second
+                                    )
+                                },
                                 modifier = Modifier
                                     .size(32.dp)
                                     .padding(top = 12.dp)
@@ -1398,7 +1546,11 @@ private fun DraggableInstructionSections(
                                 itemH[idx] = c.size.height
                             }
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("Tilføj trin", style = MaterialTheme.typography.bodySmall)
                         }
@@ -1458,6 +1610,132 @@ private fun ServingsRow(
     }
 }
 
+// ── Menu plan shopping list dialog ─────────────────────────────────────────────
+
+private fun mergedIngredientRowKey(line: MergedIngredientRow): String =
+    listOf(line.name, line.quantity, line.unit).joinToString("\u0000")
+
+@Suppress("FunctionNaming")
+@Composable
+private fun MenuPlanIngredientsDialog(
+    lines: List<MergedIngredientRow>,
+    groceryListName: String?,
+    canAddToGroceryList: Boolean,
+    onAddIngredientToGroceryList: (String, String, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var addedLineKeys by remember { mutableStateOf(emptySet<String>()) }
+
+    val titleText = if (groceryListName != null) {
+        "Tilføj til $groceryListName"
+    } else {
+        "Tilføj til indkøbsliste"
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(titleText) },
+        text = {
+            Column {
+                if (groceryListName == null) {
+                    Text(
+                        text = "Ingen indkøbsliste — opret og åbn en liste først",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                }
+                if (lines.isEmpty()) {
+                    Text(
+                        text = "Ingen ingredienser i denne madplan.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(0.dp),
+                    ) {
+                        lines.forEach { line ->
+                            val rowKey = mergedIngredientRowKey(line)
+                            val isAdded = rowKey in addedLineKeys
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp)
+                                    .alpha(if (isAdded) 0.6f else 1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                val qty = listOf(line.quantity, line.unit)
+                                    .filter { it.isNotBlank() }
+                                    .joinToString(" ")
+                                Row(
+                                    modifier = Modifier.weight(1f),
+                                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    if (qty.isNotBlank()) {
+                                        Text(
+                                            text = qty,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.widthIn(
+                                                min = 56.dp,
+                                                max = 65.dp,
+                                            ),
+                                        )
+                                    }
+                                    Text(
+                                        text = line.name,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier.width(60.dp),
+                                    contentAlignment = Alignment.CenterEnd,
+                                ) {
+                                    if (isAdded) {
+                                        Text(
+                                            text = "Tilføjet",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.secondary,
+                                        )
+                                    } else {
+                                        IconButton(
+                                            onClick = {
+                                                onAddIngredientToGroceryList(
+                                                    line.name,
+                                                    line.quantity,
+                                                    line.unit,
+                                                )
+                                                addedLineKeys = addedLineKeys + rowKey
+                                            },
+                                            enabled = canAddToGroceryList && line.name.isNotBlank(),
+                                            modifier = Modifier.size(40.dp),
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Add,
+                                                contentDescription = "Tilføj ${line.name} til indkøbsliste",
+                                                modifier = Modifier.size(22.dp),
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Luk") }
+        },
+    )
+}
+
 // ── Menu plan card ─────────────────────────────────────────────────────────────
 
 @Suppress("FunctionNaming", "LongParameterList")
@@ -1470,7 +1748,25 @@ private fun MenuPlanCard(
     onEditPlan: () -> Unit,
     onRemoveRecipe: (String) -> Unit,
     onEditRecipe: (Recipe) -> Unit,
+    groceryListName: String?,
+    canAddToGroceryList: Boolean,
+    onAddIngredientToGroceryList: (String, String, String) -> Unit,
 ) {
+    val mergedIngredientLines = remember(plan.id, plan.servings, plan.recipeIds, recipes) {
+        buildMergedMenuPlanIngredients(plan, recipes)
+    }
+    var showIngredientsDialog by remember { mutableStateOf(false) }
+
+    if (showIngredientsDialog) {
+        MenuPlanIngredientsDialog(
+            lines = mergedIngredientLines,
+            groceryListName = groceryListName,
+            canAddToGroceryList = canAddToGroceryList,
+            onAddIngredientToGroceryList = onAddIngredientToGroceryList,
+            onDismiss = { showIngredientsDialog = false },
+        )
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -1503,6 +1799,20 @@ private fun MenuPlanCard(
                     text = infoParts.joinToString(" · "),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary
+                )
+            }
+            IconButton(
+                onClick = { showIngredientsDialog = true },
+                enabled = mergedIngredientLines.isNotEmpty(),
+                modifier = Modifier.size(40.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Default.ShoppingCart,
+                    contentDescription = "Indkøbsliste for ${plan.name}",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                        alpha = if (mergedIngredientLines.isNotEmpty()) 1f else 0.38f
+                    ),
+                    modifier = Modifier.size(22.dp)
                 )
             }
             Icon(
@@ -1593,7 +1903,7 @@ private fun RecipeRow(
                         text = "$completedSteps/$totalSteps",
                         style = MaterialTheme.typography.labelSmall,
                         color = if (isAllDone) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = if (isAllDone) FontWeight.Bold else FontWeight.Normal,
                     )
                 }
@@ -1661,6 +1971,69 @@ private fun scaleQuantity(raw: String, factor: Double): String {
     if (factor == 1.0) return raw
     val parsed = parseQuantity(raw) ?: return raw
     return formatQuantity(parsed * factor)
+}
+
+private data class MergedIngredientRow(
+    val quantity: String,
+    val unit: String,
+    val name: String,
+)
+
+private fun normalizeIngredientMergeKey(name: String, unit: String): String {
+    val n = name.trim().lowercase()
+    val u = unit.trim().lowercase()
+    return "$n|$u"
+}
+
+private fun buildMergedMenuPlanIngredients(
+    plan: MenuPlan,
+    recipes: List<Recipe>
+): List<MergedIngredientRow> {
+    val scaleFactorFor: (Recipe) -> Double = { recipe ->
+        if (plan.servings > 0 && recipe.servings > 0) plan.servings.toDouble() / recipe.servings
+        else 1.0
+    }
+    val scaled = buildList {
+        for (recipe in recipes) {
+            val factor = scaleFactorFor(recipe)
+            for (section in recipe.ingredientSections) {
+                for (ing in section.ingredients) {
+                    if (ing.name.isBlank() && ing.quantity.isBlank() && ing.unit.isBlank()) continue
+                    val scaledQty = scaleQuantity(ing.quantity, factor)
+                    add(
+                        Triple(
+                            ing.name.trim(),
+                            ing.unit.trim(),
+                            scaledQty.trim(),
+                        )
+                    )
+                }
+            }
+        }
+    }
+    return scaled
+        .groupBy { normalizeIngredientMergeKey(it.first, it.second) }
+        .map { (_, group) ->
+            val displayName = group.firstOrNull { it.first.isNotBlank() }?.first.orEmpty()
+                .capitalizeIngredientFirstLetter()
+            val unit = group.first().second
+            val qtyStrings = group.map { it.third }
+            val mergedQty = mergeQuantityStrings(qtyStrings)
+            MergedIngredientRow(mergedQty, unit, displayName)
+        }
+        .sortedBy { it.name.lowercase() }
+}
+
+private fun mergeQuantityStrings(quantities: List<String>): String {
+    val nonBlank = quantities.filter { it.isNotBlank() }
+    if (nonBlank.isEmpty()) return ""
+    val allParse = nonBlank.all { parseQuantity(it) != null }
+    return if (allParse) {
+        val sum = nonBlank.sumOf { parseQuantity(it)!! }
+        formatQuantity(sum)
+    } else {
+        nonBlank.distinct().joinToString(" + ")
+    }
 }
 
 private fun buildRecipeSubtitle(recipe: Recipe, showServings: Boolean = true): String {
@@ -1846,7 +2219,11 @@ private fun EditMenuPlanDialog(
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("Slet madplan")
                 }
@@ -1876,7 +2253,10 @@ private fun ReorderableRecipeList(
         recipes.forEachIndexed { index, recipe ->
             val isDragging = index == draggingIndex
             val draggedTo = draggingIndex?.let { from ->
-                (from + (draggingOffsetY / itemHeightPx).roundToInt()).coerceIn(0, recipes.lastIndex)
+                (from + (draggingOffsetY / itemHeightPx).roundToInt()).coerceIn(
+                    0,
+                    recipes.lastIndex
+                )
             }
             val shiftY = when {
                 draggingIndex == null || isDragging -> 0f
@@ -1912,7 +2292,8 @@ private fun ReorderableRecipeList(
                                 onDragStart = { draggingIndex = index; draggingOffsetY = 0f },
                                 onDrag = { _, delta -> draggingOffsetY += delta.y },
                                 onDragEnd = {
-                                    val from = draggingIndex ?: return@detectDragGesturesAfterLongPress
+                                    val from =
+                                        draggingIndex ?: return@detectDragGesturesAfterLongPress
                                     val to = (from + (draggingOffsetY / itemHeightPx).roundToInt())
                                         .coerceIn(0, recipes.lastIndex)
                                     if (from != to) onReorder(from, to)
@@ -1997,7 +2378,11 @@ private fun AddToPlanDialog(
                         onClick = { creatingNew = true },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("Ny madplan", modifier = Modifier.fillMaxWidth())
                     }

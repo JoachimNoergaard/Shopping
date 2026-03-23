@@ -117,6 +117,16 @@ import dk.joachim.shopping.data.isFutureWeekday
 import dk.joachim.shopping.data.weekdayNameToNextDate
 import kotlinx.coroutines.flow.first
 
+/** Item is in the Andet bucket: real “Andet” category or unknown category id (shown as Andet). */
+private fun itemIsInAndetBucketForEditing(item: GroceryItem, userCategories: List<UserCategory>): Boolean {
+    if (userCategories.isEmpty()) return false
+    val resolved = userCategories.firstOrNull { it.id == item.category }
+    return when {
+        resolved != null -> resolved.name.contains("Andet", ignoreCase = true)
+        else -> item.category.isNotBlank()
+    }
+}
+
 private fun String.toColor(): Color = try {
     Color(this.toColorInt())
 } catch (_: Exception) {
@@ -257,6 +267,7 @@ fun GroceryListScreen(
                 onAdjustQuantity = viewModel::adjustItemQuantity,
                 onSetQuantity = viewModel::setItemQuantity,
                 onUpdateComment = viewModel::updateItemComment,
+                onUpdateCategory = viewModel::updateItemCategory,
                 contentPadding = paddingValues
             )
         }
@@ -267,13 +278,20 @@ fun GroceryListScreen(
             name = uiState.newItemName,
             quantity = uiState.newItemQuantity,
             category = uiState.newItemCategory,
+            weekday = uiState.newItemWeekday,
+            price = uiState.newItemPrice,
+            supermarket = uiState.newItemSupermarket,
             userCategories = uiState.userCategories,
+            shops = uiState.shops,
             existingItems = items,
             catalogItems = uiState.catalogItems,
             itemAddedCount = uiState.itemAddedCount,
             onNameChange = viewModel::updateNewItemName,
             onQuantityChange = viewModel::updateNewItemQuantity,
             onCategoryChange = viewModel::updateNewItemCategory,
+            onWeekdayChange = viewModel::updateNewItemWeekday,
+            onPriceChange = viewModel::updateNewItemPrice,
+            onSupermarketChange = viewModel::updateNewItemSupermarket,
             onFillFromSuggestion = viewModel::fillFromSuggestion,
             onFillFromCatalogSuggestion = viewModel::fillFromCatalogSuggestion,
             onConfirm = viewModel::addItem,
@@ -300,6 +318,7 @@ private fun GroceryItemList(
     onAdjustQuantity: (String, Int) -> Unit,
     onSetQuantity: (String, String) -> Unit,
     onUpdateComment: (String, String?) -> Unit,
+    onUpdateCategory: (String, String) -> Unit,
     contentPadding: PaddingValues
 ) {
     val unchecked = items.filter { !it.isChecked }
@@ -366,6 +385,7 @@ private fun GroceryItemList(
             itemsIndexed(categoryItems, key = { _, it -> it.id }) { index, item ->
                 GroceryItemCard(
                     item = item,
+                    userCategories = userCategories,
                     shops = shops,
                     isFirst = index == 0,
                     isLast = index == categoryItems.lastIndex,
@@ -383,6 +403,7 @@ private fun GroceryItemList(
                     onAdjustQuantity = { onAdjustQuantity(item.id, it) },
                     onSetQuantity = { onSetQuantity(item.id, it) },
                     onUpdateComment = { onUpdateComment(item.id, it) },
+                    onUpdateCategory = { catId -> onUpdateCategory(item.id, catId) },
                 )
             }
             item(key = "spacer_$categoryId") {
@@ -403,6 +424,7 @@ private fun GroceryItemList(
                 itemsIndexed(futureItems, key = { _, it -> it.id }) { index, item ->
                     GroceryItemCard(
                         item = item,
+                        userCategories = userCategories,
                         shops = shops,
                         isFirst = index == 0,
                         isLast = index == futureItems.lastIndex,
@@ -415,6 +437,7 @@ private fun GroceryItemList(
                         onAdjustQuantity = { onAdjustQuantity(item.id, it) },
                         onSetQuantity = { onSetQuantity(item.id, it) },
                         onUpdateComment = { onUpdateComment(item.id, it) },
+                        onUpdateCategory = { catId -> onUpdateCategory(item.id, catId) },
                         isFuture = true,
                     )
                 }
@@ -435,6 +458,7 @@ private fun GroceryItemList(
                 itemsIndexed(checked, key = { _, it -> it.id }) { index, item ->
                     GroceryItemCard(
                         item = item,
+                        userCategories = userCategories,
                         shops = shops,
                         isFirst = index == 0,
                         isLast = index == checked.lastIndex,
@@ -452,6 +476,7 @@ private fun GroceryItemList(
                         onAdjustQuantity = { onAdjustQuantity(item.id, it) },
                         onSetQuantity = { onSetQuantity(item.id, it) },
                         onUpdateComment = { onUpdateComment(item.id, it) },
+                        onUpdateCategory = { catId -> onUpdateCategory(item.id, catId) },
                     )
                 }
             }
@@ -579,6 +604,7 @@ private fun CategoryHeader(name: String) {
 @Composable
 private fun GroceryItemCard(
     item: GroceryItem,
+    userCategories: List<UserCategory>,
     shops: List<Shop>,
     isFirst: Boolean,
     isLast: Boolean,
@@ -592,8 +618,8 @@ private fun GroceryItemCard(
     onAdjustQuantity: (Int) -> Unit,
     onSetQuantity: (String) -> Unit,
     onUpdateComment: (String?) -> Unit,
-
-    ) {
+    onUpdateCategory: (String) -> Unit,
+) {
     var showDetailsDialog by remember { mutableStateOf(false) }
     var showQuantityControls by rememberSaveable(item.id) { mutableStateOf(false) }
     var interactionTick by remember { mutableStateOf(0) }
@@ -785,6 +811,7 @@ private fun GroceryItemCard(
     if (showDetailsDialog) {
         ItemDetailsDialog(
             item = item,
+            userCategories = userCategories,
             shops = shops,
             onUpdateName = onUpdateName,
             onAdjustQuantity = onAdjustQuantity,
@@ -793,6 +820,7 @@ private fun GroceryItemCard(
             onUpdatePrice = onUpdatePrice,
             onUpdateSupermarket = onUpdateSupermarket,
             onUpdateComment = onUpdateComment,
+            onUpdateCategory = onUpdateCategory,
             onDismiss = { showDetailsDialog = false }
         )
     }
@@ -802,6 +830,7 @@ private fun GroceryItemCard(
 @Composable
 private fun ItemDetailsDialog(
     item: GroceryItem,
+    userCategories: List<UserCategory>,
     shops: List<Shop>,
     onUpdateName: (String) -> Unit,
     onAdjustQuantity: (Int) -> Unit,
@@ -810,6 +839,7 @@ private fun ItemDetailsDialog(
     onUpdatePrice: (String?) -> Unit,
     onUpdateSupermarket: (String?) -> Unit,
     onUpdateComment: (String?) -> Unit,
+    onUpdateCategory: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var nameText by remember { mutableStateOf(item.name) }
@@ -819,6 +849,8 @@ private fun ItemDetailsDialog(
     var pendingWeekday by remember { mutableStateOf(item.weekday) }
     var pendingSupermarket by remember { mutableStateOf(item.supermarket) }
     var supermarketDropdownExpanded by remember { mutableStateOf(false) }
+    var categoryDropdownExpanded by remember { mutableStateOf(false) }
+    var pendingCategoryId by remember(item.id, item.category) { mutableStateOf(item.category) }
 
     fun commit() {
         if (nameText.isNotBlank()) onUpdateName(nameText)
@@ -827,6 +859,9 @@ private fun ItemDetailsDialog(
         onUpdatePrice(priceText.ifBlank { null })
         onUpdateComment(commentText.ifBlank { null })
         onUpdateSupermarket(pendingSupermarket)
+        if (itemIsInAndetBucketForEditing(item, userCategories) && pendingCategoryId != item.category) {
+            onUpdateCategory(pendingCategoryId)
+        }
         onDismiss()
     }
 
@@ -844,19 +879,11 @@ private fun ItemDetailsDialog(
                     modifier = Modifier.padding(top = 2.dp),
                     text = "Rediger vare"
                 )
-                IconButton(onClick = {
-                    val encoded = Uri.encode(item.name)
-                    val intent = Intent(
-                        Intent.ACTION_VIEW,
-                        Uri.parse("https://etilbudsavis.dk/soeg/$encoded")
-                    )
-                    context.startActivity(intent)
-                }) {
-                    Icon(
-                        modifier = Modifier.size(24.dp),
-                        painter = painterResource(R.drawable.ic_etilbudsavis),
-                        contentDescription = "Søg på eTilbudsavis"
-                    )
+                TextButton(
+                    onClick = ::commit,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text("Færdig")
                 }
             }
         },
@@ -874,11 +901,22 @@ private fun ItemDetailsDialog(
                     },
                     label = { Text("Navn") },
                     leadingIcon = {
-                        Icon(
-                            Icons.Default.Edit,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        IconButton(
+                            onClick = {
+                                val encoded = Uri.encode(nameText.ifBlank { item.name })
+                                val intent = Intent(
+                                    Intent.ACTION_VIEW,
+                                    Uri.parse("https://etilbudsavis.dk/soeg/$encoded")
+                                )
+                                context.startActivity(intent)
+                            }
+                        ) {
+                            Icon(
+                                modifier = Modifier.size(24.dp),
+                                painter = painterResource(R.drawable.ic_etilbudsavis),
+                                contentDescription = "Søg på eTilbudsavis"
+                            )
+                        }
                     },
                     trailingIcon = {
                         if (nameText.isNotEmpty()) {
@@ -896,6 +934,67 @@ private fun ItemDetailsDialog(
                         unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
                     )
                 )
+
+                // ── Category (only when item is under Andet — move to another aisle) ──
+                if (itemIsInAndetBucketForEditing(item, userCategories)) {
+                    val selectedCategoryLabel = userCategories
+                        .firstOrNull { it.id == pendingCategoryId }?.name.orEmpty()
+                    ExposedDropdownMenuBox(
+                        expanded = categoryDropdownExpanded,
+                        onExpandedChange = {
+                            categoryDropdownExpanded = if (userCategories.isNotEmpty()) it else false
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        OutlinedTextField(
+                            value = selectedCategoryLabel,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text(stringResource(R.string.category_required)) },
+                            placeholder = {
+                                Text(
+                                    if (userCategories.isEmpty()) "Opret kategorier under Indstillinger"
+                                    else stringResource(R.string.choose_category)
+                                )
+                            },
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryDropdownExpanded)
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor(),
+                            textStyle = MaterialTheme.typography.bodyMedium,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                            ),
+                        )
+                        ExposedDropdownMenu(
+                            expanded = categoryDropdownExpanded,
+                            onDismissRequest = { categoryDropdownExpanded = false },
+                        ) {
+                            userCategories.forEach { cat ->
+                                DropdownMenuItem(
+                                    text = { Text(cat.name) },
+                                    onClick = {
+                                        pendingCategoryId = cat.id
+                                        categoryDropdownExpanded = false
+                                    },
+                                    trailingIcon = if (cat.id == pendingCategoryId) {
+                                        {
+                                            Icon(
+                                                Icons.Default.CheckCircle,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(16.dp),
+                                            )
+                                        }
+                                    } else null,
+                                )
+                            }
+                        }
+                    }
+                }
 
                 // ── Quantity stepper ──────────────────────────────────────
                 val qty = quantityText.trimStart().takeWhile { it.isDigit() }.toIntOrNull() ?: 1
@@ -928,76 +1027,6 @@ private fun ItemDetailsDialog(
                     singleLine = true,
                     textStyle = MaterialTheme.typography.bodyLarge.copy(textAlign = TextAlign.Center),
                     modifier = Modifier.fillMaxWidth(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                    )
-                )
-
-                // ── Weekday selector ──────────────────────────────────────
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.CalendarToday,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Dag, hvor tilbuddet starter",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    WEEKDAYS.forEach { day ->
-                        val selected = pendingWeekday?.let { dateToWeekdayAbbr(it) } == day
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (selected) MaterialTheme.colorScheme.primaryContainer
-                                    else MaterialTheme.colorScheme.surfaceVariant
-                                )
-                                .clickable {
-                                    pendingWeekday =
-                                        if (selected) null else weekdayNameToNextDate(day)
-                                }
-                        ) {
-                            Text(
-                                text = day.take(1),
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (selected)
-                                    MaterialTheme.colorScheme.onPrimaryContainer
-                                else
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-
-                // ── Comment ───────────────────────────────────────────────
-                OutlinedTextField(
-                    value = commentText,
-                    onValueChange = { value ->
-                        commentText = value
-                    },
-                    label = { Text("Kommentar") },
-                    leadingIcon = {
-                        Icon(
-                            Icons.Default.Notes,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    },
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                    minLines = 1,
-                    maxLines = 3,
-                    modifier = Modifier.fillMaxWidth(),
-                    textStyle = MaterialTheme.typography.bodyMedium,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = MaterialTheme.colorScheme.primary,
                         unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
@@ -1105,11 +1134,79 @@ private fun ItemDetailsDialog(
                         unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
                     )
                 )
+
+                // ── Weekday selector ──────────────────────────────────────
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.CalendarToday,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Dag, hvor tilbuddet starter",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    WEEKDAYS.forEach { day ->
+                        val selected = pendingWeekday?.let { dateToWeekdayAbbr(it) } == day
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (selected) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                                )
+                                .clickable {
+                                    pendingWeekday =
+                                        if (selected) null else weekdayNameToNextDate(day)
+                                }
+                        ) {
+                            Text(
+                                text = day.take(1),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selected)
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                // ── Comment ───────────────────────────────────────────────
+                OutlinedTextField(
+                    value = commentText,
+                    onValueChange = { value ->
+                        commentText = value
+                    },
+                    label = { Text("Kommentar") },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Notes,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                    minLines = 1,
+                    maxLines = 3,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                )
             }
         },
-        confirmButton = {
-            TextButton(onClick = ::commit) { Text("Færdig") }
-        }
+        confirmButton = {}
     )
 }
 
@@ -1184,13 +1281,20 @@ private fun AddGroceryItemDialog(
     name: String,
     quantity: String,
     category: UserCategory?,
+    weekday: String?,
+    price: String,
+    supermarket: String?,
     userCategories: List<UserCategory>,
+    shops: List<Shop>,
     existingItems: List<GroceryItem>,
     catalogItems: List<CatalogItem>,
     itemAddedCount: Int,
     onNameChange: (String) -> Unit,
     onQuantityChange: (String) -> Unit,
     onCategoryChange: (UserCategory) -> Unit,
+    onWeekdayChange: (String?) -> Unit,
+    onPriceChange: (String) -> Unit,
+    onSupermarketChange: (String?) -> Unit,
     onFillFromSuggestion: (GroceryItem) -> Unit,
     onFillFromCatalogSuggestion: (CatalogItem) -> Unit,
     onConfirm: () -> Unit,
@@ -1198,6 +1302,7 @@ private fun AddGroceryItemDialog(
 ) {
     var categoryExpanded by remember { mutableStateOf(false) }
     var suggestionsExpanded by remember { mutableStateOf(false) }
+    var supermarketDropdownExpanded by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -1238,9 +1343,28 @@ private fun AddGroceryItemDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.add_items)) },
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(stringResource(R.string.add_items))
+                val canAdd = name.isNotBlank() && (category != null || userCategories.isEmpty())
+                Button(
+                    onClick = onConfirm,
+                    enabled = canAdd,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
+                ) {
+                    Text(stringResource(R.string.add))
+                }
+            }
+        },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.verticalScroll(rememberScrollState())
+            ) {
 
                 // ── Name field with autocomplete ──────────────────────────
                 ExposedDropdownMenuBox(
@@ -1390,16 +1514,155 @@ private fun AddGroceryItemDialog(
                         }
                     }
                 }
+
+                // ── Shop ──────────────────────────────────────────────────
+                ExposedDropdownMenuBox(
+                    expanded = supermarketDropdownExpanded,
+                    onExpandedChange = { supermarketDropdownExpanded = it },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    val selectedShop = shops.firstOrNull { it.id == supermarket }
+                    OutlinedTextField(
+                        value = selectedShop?.name ?: (supermarket ?: ""),
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Butik") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Store,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = supermarketDropdownExpanded)
+                        },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .menuAnchor()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = supermarketDropdownExpanded,
+                        onDismissRequest = { supermarketDropdownExpanded = false }
+                    ) {
+                        if (supermarket != null) {
+                            DropdownMenuItem(
+                                text = { Text("— Ryd", color = MaterialTheme.colorScheme.error) },
+                                onClick = {
+                                    onSupermarketChange(null)
+                                    supermarketDropdownExpanded = false
+                                }
+                            )
+                        }
+                        shops.forEach { shop ->
+                            DropdownMenuItem(
+                                text = {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(12.dp)
+                                                .clip(CircleShape)
+                                                .background(shop.backgroundColor.toColor())
+                                        )
+                                        Text(shop.name)
+                                    }
+                                },
+                                onClick = {
+                                    onSupermarketChange(shop.id)
+                                    supermarketDropdownExpanded = false
+                                },
+                                trailingIcon = if (supermarket == shop.id) ({
+                                    Icon(
+                                        Icons.Default.Store,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }) else null
+                            )
+                        }
+                    }
+                }
+
+                // ── Price ───────────────────────────────────────────────────
+                OutlinedTextField(
+                    value = price,
+                    onValueChange = onPriceChange,
+                    label = { Text("Pris") },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.LocalOffer,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = MaterialTheme.typography.bodyMedium,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+                    )
+                )
+
+                // ── Weekday (offer start day) ─────────────────────────────
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.CalendarToday,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Dag, hvor tilbuddet starter",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    WEEKDAYS.forEach { day ->
+                        val selected = weekday?.let { dateToWeekdayAbbr(it) } == day
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (selected) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                                )
+                                .clickable {
+                                    onWeekdayChange(
+                                        if (selected) null else weekdayNameToNextDate(day)
+                                    )
+                                }
+                        ) {
+                            Text(
+                                text = day.take(1),
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (selected)
+                                    MaterialTheme.colorScheme.onPrimaryContainer
+                                else
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
             }
         },
-        confirmButton = {
-            Button(
-                onClick = onConfirm,
-                enabled = name.isNotBlank() && (category != null || userCategories.isEmpty())
-            ) {
-                Text(stringResource(R.string.add))
-            }
-        },
+        confirmButton = {},
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
         }

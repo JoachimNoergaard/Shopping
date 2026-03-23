@@ -24,11 +24,13 @@ import java.util.concurrent.atomic.AtomicLong
 private const val PREFS_NAME = "shopping_prefs"
 private const val KEY_LISTS = "lists"
 const val KEY_LAST_LIST_ID = "last_list_id"
+private const val KEY_LAST_MAIN_SECTION = "last_main_section"
 private const val KEY_PROFILE_ID = "profile_id"
 private const val KEY_ONBOARDING_DONE = "onboarding_done"
 private const val KEY_CATEGORIES = "categories"
 private const val KEY_PENDING_MUTATIONS = "pending_mutations"
 private const val KEY_MENU_PLANS = "menu_plans"
+private const val KEY_LAST_EXPANDED_MENU_PLAN_ID = "last_expanded_menu_plan_id"
 private const val KEY_RECIPES = "recipes"
 // How long (ms) to suppress server sync after a local write, giving the server
 // time to process the push before we pull again.
@@ -48,6 +50,11 @@ private data class PendingMutation(
 }
 
 object ShoppingRepository {
+
+    /** Last primary UI: cooking (Madlavning), a specific list, or grocery overview (Indkøb lists). */
+    const val LAST_MAIN_SECTION_COOKING = "cooking"
+    const val LAST_MAIN_SECTION_GROCERY_LIST = "grocery_list"
+    const val LAST_MAIN_SECTION_GROCERY_HOME = "grocery_home"
 
     // Background scope for fire-and-forget remote pushes.
     // SupervisorJob ensures one failing coroutine doesn't cancel the others.
@@ -91,11 +98,16 @@ object ShoppingRepository {
     private val _recipes = MutableStateFlow<List<Recipe>>(emptyList())
     val recipes: StateFlow<List<Recipe>> = _recipes.asStateFlow()
 
+    /** Mirrors [KEY_LAST_LIST_ID] so UI (e.g. merged menu target list) updates when the user opens another list. */
+    private val _lastListId = MutableStateFlow<String?>(null)
+    val lastListId: StateFlow<String?> = _lastListId.asStateFlow()
+
     fun init(context: Context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         _lists.value = loadLists()
         _menuPlans.value = loadMenuPlans()
         _recipes.value = loadRecipes()
+        _lastListId.value = prefs.getString(KEY_LAST_LIST_ID, null)
     }
 
     // ── Persistence ────────────────────────────────────────────────────────
@@ -173,7 +185,11 @@ object ShoppingRepository {
 
     private fun loadRecipes(): List<Recipe> {
         val raw = prefs.getString(KEY_RECIPES, null) ?: return emptyList()
-        return try { json.decodeFromString(raw) } catch (_: Exception) { emptyList() }
+        return try {
+            json.decodeFromString<List<Recipe>>(raw).map { it.withIngredientNamesFirstLetterCapitalized() }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     private fun saveRecipes(recipes: List<Recipe>) {
@@ -192,16 +208,18 @@ object ShoppingRepository {
     }
 
     fun addRecipe(recipe: Recipe) {
-        val updated = _recipes.value + recipe
+        val normalized = recipe.withIngredientNamesFirstLetterCapitalized()
+        val updated = _recipes.value + normalized
         _recipes.value = updated
         saveRecipes(updated)
-        scope.launch { RemoteDataSource.upsertRecipe(recipe) }
+        scope.launch { RemoteDataSource.upsertRecipe(normalized) }
     }
 
     fun updateRecipe(recipe: Recipe) {
-        _recipes.update { list -> list.map { if (it.id == recipe.id) recipe else it } }
+        val normalized = recipe.withIngredientNamesFirstLetterCapitalized()
+        _recipes.update { list -> list.map { if (it.id == normalized.id) normalized else it } }
         saveRecipes(_recipes.value)
-        scope.launch { RemoteDataSource.upsertRecipe(recipe) }
+        scope.launch { RemoteDataSource.upsertRecipe(normalized) }
     }
 
     fun deleteRecipe(id: String) {
@@ -264,7 +282,7 @@ object ShoppingRepository {
     suspend fun syncRecipes() {
         val profileId = getOrCreateProfileId()
         val remote = RemoteDataSource.getRecipes(profileId) ?: return
-        val recipes = remote.map { it.toRecipe() }
+        val recipes = remote.map { it.toRecipe().withIngredientNamesFirstLetterCapitalized() }
         _recipes.value = recipes
         saveRecipes(recipes)
     }
@@ -342,11 +360,27 @@ object ShoppingRepository {
         return remaining.isEmpty()
     }
 
-    fun getLastListId(): String? = prefs.getString(KEY_LAST_LIST_ID, null)
+    fun getLastListId(): String? = _lastListId.value ?: prefs.getString(KEY_LAST_LIST_ID, null)
 
     fun saveLastListId(id: String) {
         prefs.edit().putString(KEY_LAST_LIST_ID, id).apply()
+        _lastListId.value = id
     }
+
+    fun saveLastMainSection(section: String) {
+        prefs.edit().putString(KEY_LAST_MAIN_SECTION, section).apply()
+    }
+
+    fun getLastMainSection(): String? = prefs.getString(KEY_LAST_MAIN_SECTION, null)
+
+    fun saveLastExpandedMenuPlanId(id: String?) {
+        prefs.edit().apply {
+            if (id == null) remove(KEY_LAST_EXPANDED_MENU_PLAN_ID)
+            else putString(KEY_LAST_EXPANDED_MENU_PLAN_ID, id)
+        }.apply()
+    }
+
+    fun getLastExpandedMenuPlanId(): String? = prefs.getString(KEY_LAST_EXPANDED_MENU_PLAN_ID, null)
 
     fun getOrCreateProfileId(): String {
         val existing = prefs.getString(KEY_PROFILE_ID, null)
@@ -795,6 +829,19 @@ object ShoppingRepository {
         schedulePush(listId, itemId)
     }
 
+    fun updateItemCategory(listId: String, itemId: String, categoryId: String) {
+        recordMutation()
+        val item = itemIn(listId, itemId) ?: return
+        if (item.category == categoryId) return
+        updateList(listId) { list ->
+            list.copy(items = list.items.map {
+                if (it.id == itemId) it.copy(category = categoryId) else it
+            })
+        }
+        schedulePush(listId, itemId)
+        saveToCatalog(item.name, categoryId)
+    }
+
     fun updateItemName(listId: String, itemId: String, newName: String) {
         recordMutation()
         val trimmed = newName.trim()
@@ -838,26 +885,37 @@ object ShoppingRepository {
         return if (unit.isEmpty()) formatted else "$formatted $unit"
     }
 
-    fun addOrMergeItem(listId: String, name: String, quantity: String, category: String) {
+    fun addOrMergeItem(
+        listId: String,
+        name: String,
+        quantity: String,
+        category: String,
+        weekday: String? = null,
+        price: String? = null,
+        supermarket: String? = null,
+        comment: String? = null,
+    ) {
         recordMutation()
         val trimmedName = name.trim()
         val trimmedQty = quantity.trim().ifBlank { "1" }
+        val trimmedPrice = price?.trim()?.takeIf { it.isNotEmpty() }
+        val trimmedComment = comment?.trim()?.takeIf { it.isNotEmpty() }
         updateList(listId) { list ->
             val existing = list.items.firstOrNull { it.name.equals(trimmedName, ignoreCase = true) }
             if (existing != null) {
                 list.copy(items = list.items.map { item ->
                     if (item.id != existing.id) item
                     else if (existing.isChecked) {
-                        // Re-adding a completed item: reset it fully
+                        // Re-adding a completed item: reset it fully; apply optional day / shop / price from the dialog
                         item.copy(
                             quantity = trimmedQty,
                             category = category,
                             isChecked = false,
                             checkedAt = null,
-                            weekday = null,
-                            price = null,
-                            supermarket = null,
-                            comment = null,
+                            weekday = weekday,
+                            price = trimmedPrice,
+                            supermarket = supermarket,
+                            comment = trimmedComment,
                         )
                     } else {
                         item.copy(quantity = mergeQuantities(item.quantity, trimmedQty))
@@ -869,7 +927,11 @@ object ShoppingRepository {
                         id = UUID.randomUUID().toString(),
                         name = trimmedName,
                         quantity = trimmedQty,
-                        category = category
+                        category = category,
+                        weekday = weekday,
+                        price = trimmedPrice,
+                        supermarket = supermarket,
+                        comment = trimmedComment,
                     )
                 )
             }
