@@ -187,6 +187,11 @@ class CookingViewModel : ViewModel() {
         }
     }
 
+    /** Fetches latest menu plans (including recipe progress) from the server — call when opening the Cooking tab. */
+    fun syncMenuPlansFromServer() {
+        viewModelScope.launch { repository.syncMenuPlans() }
+    }
+
     /**
      * Adds one ingredient line to the last-used grocery list (or first list if the id is stale).
      * Category comes from the catalog when the name matches; otherwise the “Andet” category.
@@ -412,8 +417,23 @@ class CookingViewModel : ViewModel() {
 
     // ── Recipe viewing ─────────────────────────────────────────────────────────
 
-    fun openRecipeViewer(recipe: Recipe, menuPlanId: String? = null) =
+    fun openRecipeViewer(recipe: Recipe, menuPlanId: String? = null) {
         _extra.update { it.copy(viewingRecipe = recipe, viewingMenuPlanId = menuPlanId) }
+        if (menuPlanId != null) {
+            viewModelScope.launch {
+                repository.syncRecipes()
+                repository.syncMenuPlans()
+                repository.pruneInvalidRecipeProgress(menuPlanId, recipe.id)
+                if (_extra.value.viewingRecipe?.id == recipe.id &&
+                    _extra.value.viewingMenuPlanId == menuPlanId
+                ) {
+                    repository.recipes.value
+                        .firstOrNull { it.id == recipe.id }
+                        ?.let { latest -> _extra.update { it.copy(viewingRecipe = latest) } }
+                }
+            }
+        }
+    }
 
     fun dismissRecipeViewer() {
         val fromMenuPlan = _extra.value.viewingMenuPlanId != null

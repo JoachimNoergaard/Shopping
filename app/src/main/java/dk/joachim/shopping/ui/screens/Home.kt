@@ -103,6 +103,12 @@ fun GroceryListsScreen(
         }
     }
 
+    LaunchedEffect(selectedTab) {
+        if (selectedTab == 1) {
+            cookingViewModel.syncMenuPlansFromServer()
+        }
+    }
+
     Scaffold(
         modifier = Modifier
             .fillMaxSize()

@@ -279,6 +279,31 @@ object ShoppingRepository {
         }
     }
 
+    /**
+     * Drops completed-step markers that no longer match the recipe (e.g. after steps were removed).
+     * Persists and pushes when anything was removed.
+     */
+    fun pruneInvalidRecipeProgress(planId: String, recipeId: String) {
+        val recipe = _recipes.value.firstOrNull { it.id == recipeId } ?: return
+        val plan = _menuPlans.value.firstOrNull { it.id == planId } ?: return
+        val steps = plan.recipeProgress[recipeId].orEmpty()
+        if (steps.isEmpty()) return
+        val valid = steps.filter { cs ->
+            val section = recipe.instructionSections.getOrNull(cs.sectionIndex) ?: return@filter false
+            cs.stepIndex >= 0 && cs.stepIndex < section.steps.size
+        }
+        if (valid.size == steps.size) return
+        val updatedPlans = _menuPlans.value.map { p ->
+            if (p.id != planId) return@map p
+            p.copy(recipeProgress = p.recipeProgress + (recipeId to valid))
+        }
+        _menuPlans.value = updatedPlans
+        saveMenuPlans(updatedPlans)
+        scope.launch {
+            updatedPlans.firstOrNull { it.id == planId }?.let { RemoteDataSource.upsertMenuPlan(it) }
+        }
+    }
+
     suspend fun syncRecipes() {
         val profileId = getOrCreateProfileId()
         val remote = RemoteDataSource.getRecipes(profileId) ?: return
