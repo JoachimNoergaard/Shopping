@@ -87,10 +87,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
@@ -1303,13 +1305,21 @@ private fun AddGroceryItemDialog(
     var categoryExpanded by remember { mutableStateOf(false) }
     var suggestionsExpanded by remember { mutableStateOf(false) }
     var supermarketDropdownExpanded by remember { mutableStateOf(false) }
+    var showCloseInsteadOfAdd by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
+    val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
-    // Fires on initial open (itemAddedCount == 0) and again after each successful add
+    // Initial open: focus name + keyboard. After each successful add: show Luk, clear focus.
     LaunchedEffect(itemAddedCount) {
-        focusRequester.requestFocus()
-        keyboardController?.show()
+        if (itemAddedCount == 0) {
+            focusRequester.requestFocus()
+            keyboardController?.show()
+        } else {
+            showCloseInsteadOfAdd = true
+            focusManager.clearFocus(force = true)
+            keyboardController?.hide()
+        }
     }
 
     // Catalog items matching the typed name are shown first.
@@ -1351,12 +1361,21 @@ private fun AddGroceryItemDialog(
             ) {
                 Text(stringResource(R.string.add_items))
                 val canAdd = name.isNotBlank() && (category != null || userCategories.isEmpty())
-                Button(
-                    onClick = onConfirm,
-                    enabled = canAdd,
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
-                ) {
-                    Text(stringResource(R.string.add))
+                if (showCloseInsteadOfAdd) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = stringResource(R.string.close)
+                        )
+                    }
+                } else {
+                    Button(
+                        onClick = onConfirm,
+                        enabled = canAdd,
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp)
+                    ) {
+                        Text(stringResource(R.string.add))
+                    }
                 }
             }
         },
@@ -1374,6 +1393,7 @@ private fun AddGroceryItemDialog(
                     OutlinedTextField(
                         value = name,
                         onValueChange = {
+                            showCloseInsteadOfAdd = false
                             onNameChange(it)
                             suggestionsExpanded = true
                         },
@@ -1394,6 +1414,9 @@ private fun AddGroceryItemDialog(
                             .fillMaxWidth()
                             .menuAnchor()
                             .focusRequester(focusRequester)
+                            .onFocusChanged {
+                                if (it.isFocused) showCloseInsteadOfAdd = false
+                            }
                     )
                     ExposedDropdownMenu(
                         expanded = suggestionsExpanded && suggestions.isNotEmpty(),
