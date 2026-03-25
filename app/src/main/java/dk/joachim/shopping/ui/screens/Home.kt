@@ -6,6 +6,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,19 +22,21 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults.ContentPadding
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -259,7 +262,7 @@ fun GroceryListsScreen(
                         isFirst = index == 0,
                         isLast = index == uiState.lists.lastIndex,
                         onClick = { onNavigateToList(list.id) },
-                        onDelete = { viewModel.requestDeleteList(list) }
+                        onEdit = { viewModel.openEditListDialog(list) }
                     )
                 }
             }
@@ -272,6 +275,19 @@ fun GroceryListsScreen(
             onNameChange = viewModel::updateNewListName,
             onConfirm = viewModel::addList,
             onDismiss = viewModel::dismissAddListDialog
+        )
+    }
+
+    uiState.editingList?.let { list ->
+        val isOwner = list.ownerId == uiState.currentProfileId
+        EditListDialog(
+            name = uiState.editListName,
+            isOwner = isOwner,
+            originalName = list.name,
+            onNameChange = viewModel::updateEditListName,
+            onSave = viewModel::saveEditedListName,
+            onDeleteRequest = viewModel::requestDeleteFromEditDialog,
+            onDismiss = viewModel::dismissEditListDialog
         )
     }
 
@@ -319,7 +335,7 @@ private fun ListCard(
     isFirst: Boolean,
     isLast: Boolean,
     onClick: () -> Unit,
-    onDelete: () -> Unit
+    onEdit: () -> Unit
 ) {
     val totalItems = list.items.size
     val remaining = list.items.count { !it.isChecked }
@@ -333,9 +349,7 @@ private fun ListCard(
     )
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth(),
         shape = shape,
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         colors = CardDefaults.cardColors(
@@ -348,7 +362,11 @@ private fun ListCard(
                 .padding(start = 20.dp, end = 8.dp, top = 16.dp, bottom = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable(onClick = onClick)
+            ) {
                 Text(
                     text = list.name,
                     style = MaterialTheme.typography.titleMedium,
@@ -369,10 +387,10 @@ private fun ListCard(
                         MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            IconButton(onClick = onDelete, modifier = Modifier.size(40.dp)) {
+            IconButton(onClick = onEdit, modifier = Modifier.size(40.dp)) {
                 Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "Slet ${list.name}",
+                    imageVector = Icons.Default.Edit,
+                    contentDescription = "Rediger ${list.name}",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                     modifier = Modifier.size(20.dp)
                 )
@@ -415,6 +433,82 @@ private fun EmptyListsState(modifier: Modifier = Modifier) {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
+}
+
+@Suppress("FunctionNaming")
+@Composable
+private fun EditListDialog(
+    name: String,
+    isOwner: Boolean,
+    originalName: String,
+    onNameChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onDeleteRequest: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val trimmed = name.trim()
+    val canSave = isOwner && trimmed.isNotBlank() && trimmed != originalName.trim()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Rediger liste") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = onNameChange,
+                    label = { Text("Listenavn") },
+                    readOnly = !isOwner,
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.Sentences
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (!isOwner) {
+                    Text(
+                        text = "Kun ejeren af listen kan ændre navnet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                TextButton(
+                    onClick = onDeleteRequest,
+                    colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    ),
+                    contentPadding = PaddingValues(
+                        horizontal = 0.dp,
+                        vertical = ContentPadding.calculateTopPadding()
+                    )
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (isOwner) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                        }
+                        Text(if (isOwner) "Slet liste" else "Forlad liste …")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (isOwner) {
+                Button(onClick = onSave, enabled = canSave) {
+                    Text("Gem")
+                }
+            } else {
+                Box {}
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Annuller") }
+        }
+    )
 }
 
 @Suppress("FunctionNaming")

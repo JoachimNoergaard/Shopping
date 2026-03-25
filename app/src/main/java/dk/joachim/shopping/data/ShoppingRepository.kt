@@ -2,6 +2,7 @@ package dk.joachim.shopping.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import dk.joachim.shopping.data.network.PatchListRequest
 import dk.joachim.shopping.data.network.RemoteDataSource
 
 import kotlinx.coroutines.CoroutineScope
@@ -731,6 +732,13 @@ object ShoppingRepository {
         _lists.update { it.filter { l -> l.id != id } }
         saveLists(_lists.value)
         scope.launch { RemoteDataSource.deleteList(id) }
+    }
+
+    fun renameList(id: String, name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
+        updateList(id) { it.copy(name = trimmed) }
+        scope.launch { RemoteDataSource.patchList(id, PatchListRequest(trimmed)) }
     }
 
     /** Removes the current user's membership from a list they don't own. */

@@ -39,6 +39,9 @@ object RemoteDataSource {
     suspend fun deleteList(id: String): Boolean =
         runCatching { api.deleteList(id) }.isSuccess
 
+    suspend fun patchList(id: String, request: PatchListRequest): Boolean =
+        runCatching { api.patchList(id, request) }.isSuccess
+
     suspend fun upsertItem(listId: String, item: GroceryItem): Boolean =
         runCatching { api.upsertItem(listId, item.id, item) }.isSuccess
 

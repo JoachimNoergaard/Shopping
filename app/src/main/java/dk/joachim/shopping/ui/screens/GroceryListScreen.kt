@@ -885,7 +885,7 @@ private fun ItemDetailsDialog(
                     onClick = ::commit,
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                 ) {
-                    Text("Færdig")
+                    Text("Gem")
                 }
             }
         },

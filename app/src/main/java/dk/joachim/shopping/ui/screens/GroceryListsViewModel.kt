@@ -18,6 +18,8 @@ data class GroceryListsUiState(
     val newListName: String = "",
     val navigateToListId: String? = null,
     val pendingDeleteList: GroceryList? = null,
+    val editingList: GroceryList? = null,
+    val editListName: String = "",
     val currentProfileId: String = ""
 )
 
@@ -43,7 +45,9 @@ class GroceryListsViewModel : ViewModel() {
         val showAddListDialog: Boolean = false,
         val newListName: String = "",
         val navigateToListId: String? = null,
-        val pendingDeleteList: GroceryList? = null
+        val pendingDeleteList: GroceryList? = null,
+        val editingList: GroceryList? = null,
+        val editListName: String = "",
     )
 
     private val _extra = MutableStateFlow(ExtraState())
@@ -56,6 +60,8 @@ class GroceryListsViewModel : ViewModel() {
             newListName = extra.newListName,
             navigateToListId = extra.navigateToListId,
             pendingDeleteList = extra.pendingDeleteList,
+            editingList = extra.editingList,
+            editListName = extra.editListName,
             currentProfileId = repository.getOrCreateProfileId()
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), GroceryListsUiState())
@@ -75,6 +81,37 @@ class GroceryListsViewModel : ViewModel() {
     fun consumeNavigation() = _extra.update { it.copy(navigateToListId = null) }
 
     fun requestDeleteList(list: GroceryList) = _extra.update { it.copy(pendingDeleteList = list) }
+
+    fun openEditListDialog(list: GroceryList) =
+        _extra.update { it.copy(editingList = list, editListName = list.name) }
+
+    fun dismissEditListDialog() =
+        _extra.update { it.copy(editingList = null, editListName = "") }
+
+    fun updateEditListName(name: String) = _extra.update { it.copy(editListName = name) }
+
+    fun saveEditedListName() {
+        val list = _extra.value.editingList ?: return
+        if (list.ownerId != repository.getOrCreateProfileId()) return
+        val name = _extra.value.editListName.trim()
+        if (name.isBlank()) return
+        if (name != list.name) {
+            repository.renameList(list.id, name)
+        }
+        dismissEditListDialog()
+    }
+
+    /** Opens the existing delete/leave confirmation; closes the edit dialog. */
+    fun requestDeleteFromEditDialog() {
+        val list = _extra.value.editingList ?: return
+        _extra.update {
+            it.copy(
+                editingList = null,
+                editListName = "",
+                pendingDeleteList = list,
+            )
+        }
+    }
 
     fun dismissDeleteDialog() = _extra.update { it.copy(pendingDeleteList = null) }
 
