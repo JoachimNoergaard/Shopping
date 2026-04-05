@@ -443,6 +443,18 @@ class CookingViewModel : ViewModel() {
         }
     }
 
+    /** Timer notification: several recipes → show Madlavning menu-plan overview (not a single recipe). */
+    fun showMenuPlansOverviewFromTimerNotification() {
+        _extra.update {
+            it.copy(
+                viewingRecipe = null,
+                viewingMenuPlanId = null,
+                editingRecipe = null,
+            )
+        }
+        viewModelScope.launch { repository.syncMenuPlans() }
+    }
+
     fun toggleStepCompletion(sectionIndex: Int, stepIndex: Int) {
         val planId = _extra.value.viewingMenuPlanId ?: return
         val recipeId = _extra.value.viewingRecipe?.id ?: return

@@ -37,6 +37,12 @@ private const val KEY_RECIPES = "recipes"
 // time to process the push before we pull again.
 private const val SYNC_COOLDOWN_MS = 10_000L
 
+/** Deep link state when user taps the kitchen-timer notification. */
+data class PendingTimerNavigation(
+    val recipeId: String?,
+    val menuPlansOverview: Boolean,
+)
+
 @Serializable
 private data class PendingMutation(
     val type: String,
@@ -102,6 +108,17 @@ object ShoppingRepository {
     /** Mirrors [KEY_LAST_LIST_ID] so UI (e.g. merged menu target list) updates when the user opens another list. */
     private val _lastListId = MutableStateFlow<String?>(null)
     val lastListId: StateFlow<String?> = _lastListId.asStateFlow()
+
+    private val _pendingTimerNavigation = MutableStateFlow<PendingTimerNavigation?>(null)
+    val pendingTimerNavigation: StateFlow<PendingTimerNavigation?> = _pendingTimerNavigation.asStateFlow()
+
+    fun postPendingTimerNavigation(nav: PendingTimerNavigation) {
+        _pendingTimerNavigation.value = nav
+    }
+
+    fun clearPendingTimerNavigation() {
+        _pendingTimerNavigation.value = null
+    }
 
     fun init(context: Context) {
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -222,6 +239,9 @@ object ShoppingRepository {
         saveRecipes(_recipes.value)
         scope.launch { RemoteDataSource.upsertRecipe(normalized) }
     }
+
+    fun findRecipeById(id: String): Recipe? =
+        _recipes.value.firstOrNull { it.id == id }
 
     fun deleteRecipe(id: String) {
         val recipe = _recipes.value.firstOrNull { it.id == id } ?: return

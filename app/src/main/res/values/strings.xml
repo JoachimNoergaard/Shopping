@@ -14,4 +14,11 @@
     <string name="shops">Butikker</string>
     <string name="delete_list">Slet liste?</string>
     <string name="leave_list">Forlad liste?</string>
+    <string name="timer_notification_channel_name">Køkkentimere</string>
+    <string name="timer_notification_channel_desc">Viser alle aktive timere med status</string>
+    <string name="timer_notification_compact">%1$d timere · %2$d kører</string>
+    <string name="timer_notification_single_running">Timer er i gang</string>
+    <string name="timer_notification_single_paused">Timer er på pause</string>
+    <string name="timer_notification_next_step">Næste trin: %1$s</string>
+    <string name="timer_notification_subtitle"></string>
 </resources>

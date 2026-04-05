@@ -97,6 +97,23 @@ fun GroceryListsScreen(
     val cookingViewModel: CookingViewModel = viewModel()
     val cookingUiState by cookingViewModel.uiState.collectAsStateWithLifecycle()
     val isRecipeFullScreen = cookingUiState.viewingRecipe != null || cookingUiState.editingRecipe != null
+    val pendingTimerNav by ShoppingRepository.pendingTimerNavigation.collectAsStateWithLifecycle()
+
+    LaunchedEffect(pendingTimerNav) {
+        val p = pendingTimerNav ?: return@LaunchedEffect
+        selectedTab = 1
+        ShoppingRepository.saveLastMainSection(LAST_MAIN_SECTION_COOKING)
+        cookingViewModel.syncMenuPlansFromServer()
+        when {
+            p.recipeId != null -> {
+                ShoppingRepository.findRecipeById(p.recipeId)?.let { recipe ->
+                    cookingViewModel.openRecipeViewer(recipe, menuPlanId = null)
+                }
+            }
+            p.menuPlansOverview -> cookingViewModel.showMenuPlansOverviewFromTimerNotification()
+        }
+        ShoppingRepository.clearPendingTimerNavigation()
+    }
 
     // Navigate after a successful list join
     LaunchedEffect(uiState.navigateToListId) {

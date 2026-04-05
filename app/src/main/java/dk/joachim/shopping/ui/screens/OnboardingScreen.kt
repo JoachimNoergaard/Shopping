@@ -133,7 +133,7 @@ private fun WelcomeStep(onNext: () -> Unit) {
         Spacer(Modifier.height(32.dp))
 
         Text(
-            text = "Velkommen til\nSharkShopper",
+            text = "Velkommen til\nShoppingShark",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
