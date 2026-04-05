@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -68,6 +69,7 @@ object ShoppingRepository {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = Json { ignoreUnknownKeys = true }
     private lateinit var prefs: SharedPreferences
+    private lateinit var appContext: Context
 
     // Tracks the last time a local mutation was made so syncList can hold off
     // long enough for the server to process the write before pulling again.
@@ -121,6 +123,7 @@ object ShoppingRepository {
     }
 
     fun init(context: Context) {
+        appContext = context.applicationContext
         prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         _lists.value = loadLists()
         _menuPlans.value = loadMenuPlans()
@@ -230,14 +233,34 @@ object ShoppingRepository {
         val updated = _recipes.value + normalized
         _recipes.value = updated
         saveRecipes(updated)
-        scope.launch { RemoteDataSource.upsertRecipe(normalized) }
+        scope.launch {
+            RemoteDataSource.upsertRecipe(normalized, imagePayloadForUpsert(normalized.id, false))
+        }
     }
 
-    fun updateRecipe(recipe: Recipe) {
+    fun hasLocalRecipePhoto(recipeId: String): Boolean =
+        RecipePhotoStorage.hasPhoto(appContext, recipeId)
+
+    /**
+     * @param clearRecipeImageOnServer When true, sends an empty image payload so the server clears the photo.
+     *        When false, sends Base64 only if a local JPEG exists; otherwise omits `imageBase64` so the server keeps its copy.
+     */
+    fun updateRecipe(recipe: Recipe, clearRecipeImageOnServer: Boolean = false) {
         val normalized = recipe.withIngredientNamesFirstLetterCapitalized()
         _recipes.update { list -> list.map { if (it.id == normalized.id) normalized else it } }
         saveRecipes(_recipes.value)
-        scope.launch { RemoteDataSource.upsertRecipe(normalized) }
+        scope.launch {
+            RemoteDataSource.upsertRecipe(
+                normalized,
+                imagePayloadForUpsert(normalized.id, clearRecipeImageOnServer),
+            )
+        }
+    }
+
+    private fun imagePayloadForUpsert(recipeId: String, clearOnServer: Boolean): String? {
+        if (clearOnServer) return ""
+        if (!RecipePhotoStorage.hasPhoto(appContext, recipeId)) return null
+        return RecipePhotoStorage.readBase64(appContext, recipeId)
     }
 
     fun findRecipeById(id: String): Recipe? =
@@ -245,6 +268,7 @@ object ShoppingRepository {
 
     fun deleteRecipe(id: String) {
         val recipe = _recipes.value.firstOrNull { it.id == id } ?: return
+        RecipePhotoStorage.deletePhoto(appContext, id)
         val updated = _recipes.value.filter { it.id != id }
         _recipes.value = updated
         saveRecipes(updated)
@@ -328,7 +352,14 @@ object ShoppingRepository {
     suspend fun syncRecipes() {
         val profileId = getOrCreateProfileId()
         val remote = RemoteDataSource.getRecipes(profileId) ?: return
-        val recipes = remote.map { it.toRecipe().withIngredientNamesFirstLetterCapitalized() }
+        val recipes = withContext(Dispatchers.IO) {
+            remote.forEach { api ->
+                RecipePhotoStorage.saveFromBase64(appContext, api.id, api.imageBase64)
+            }
+            val ids = remote.map { it.id }.toSet()
+            RecipePhotoStorage.deleteOrphanPhotos(appContext, ids)
+            remote.map { it.toRecipe().withIngredientNamesFirstLetterCapitalized() }
+        }
         _recipes.value = recipes
         saveRecipes(recipes)
     }

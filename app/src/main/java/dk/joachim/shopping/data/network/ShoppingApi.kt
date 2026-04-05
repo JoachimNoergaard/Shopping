@@ -149,14 +149,18 @@ interface ShoppingApi {
 }
 
 fun buildShoppingApi(): ShoppingApi {
-    val json = Json { ignoreUnknownKeys = true }
+    val json = Json {
+        ignoreUnknownKeys = true
+        encodeDefaults = false
+    }
     return Retrofit.Builder()
         .baseUrl(NetworkConfig.BASE_URL)
         .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
         .client(
             OkHttpClient.Builder()
-                .connectTimeout(10, TimeUnit.SECONDS)
-                .readTimeout(10, TimeUnit.SECONDS)
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(120, TimeUnit.SECONDS)
+                .writeTimeout(120, TimeUnit.SECONDS)
                 .build()
         )
         .build()

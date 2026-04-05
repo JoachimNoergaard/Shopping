@@ -1,5 +1,8 @@
 package dk.joachim.shopping.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
@@ -16,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -81,7 +85,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -108,7 +115,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import dk.joachim.shopping.data.CompletedStep
 import dk.joachim.shopping.data.Ingredient
 import dk.joachim.shopping.data.MenuPlan
+import dk.joachim.shopping.data.RecipePhotoStorage
 import dk.joachim.shopping.data.Recipe
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import dk.joachim.shopping.data.RecipeStepTimer
 import dk.joachim.shopping.data.RecipeStepTimerEntry
 import dk.joachim.shopping.data.capitalizeIngredientFirstLetter
@@ -416,6 +426,18 @@ private fun RecipeEditorScreen(
     onUpdateInstructionStep: (Int, Int, String) -> Unit,
     onReorderInstructions: (List<InstructionSection>) -> Unit,
 ) {
+    val context = LocalContext.current
+    var hasRecipePhoto by remember(recipe.id) {
+        mutableStateOf(RecipePhotoStorage.hasPhoto(context, recipe.id))
+    }
+    val pickRecipePhoto = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri != null && RecipePhotoStorage.saveFromUri(context, recipe.id, uri)) {
+            hasRecipePhoto = true
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -450,6 +472,63 @@ private fun RecipeEditorScreen(
                 modifier = Modifier.fillMaxWidth()
             )
 
+            SectionLabel("Billede")
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 140.dp, max = 220.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+            ) {
+                if (hasRecipePhoto) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(RecipePhotoStorage.localJpegFile(context, recipe.id))
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = "Opskriftsbillede",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 220.dp),
+                        contentScale = ContentScale.Crop,
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "Intet billede",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                TextButton(
+                    onClick = {
+                        pickRecipePhoto.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                        )
+                    },
+                ) {
+                    Text("Tilføj billede")
+                }
+                if (hasRecipePhoto) {
+                    TextButton(
+                        onClick = {
+                            RecipePhotoStorage.deletePhoto(context, recipe.id)
+                            hasRecipePhoto = false
+                        },
+                    ) {
+                        Text("Fjern billede")
+                    }
+                }
+            }
+
             OutlinedTextField(
                 value = recipe.description.ifBlank { " " },
                 onValueChange = { onRecipeChange(recipe.copy(description = it.trimStart())) },
@@ -457,12 +536,6 @@ private fun RecipeEditorScreen(
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 minLines = 2,
                 modifier = Modifier.fillMaxWidth()
-            )
-
-            SectionLabel("Bedømmelse")
-            RatingBar(
-                rating = recipe.rating,
-                onRatingChange = { onRecipeChange(recipe.copy(rating = it)) }
             )
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -520,24 +593,6 @@ private fun RecipeEditorScreen(
                     modifier = Modifier.weight(1f)
                 )
             }
-
-            OutlinedTextField(
-                value = recipe.durability.ifBlank { " " },
-                onValueChange = { onRecipeChange(recipe.copy(durability = it.trimStart())) },
-                label = { Text("Holdbarhed") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            OutlinedTextField(
-                value = recipe.nutritionFacts.ifBlank { " " },
-                onValueChange = { onRecipeChange(recipe.copy(nutritionFacts = it.trimStart())) },
-                label = { Text("Næringsfakta") },
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                minLines = 2,
-                modifier = Modifier.fillMaxWidth()
-            )
 
             HorizontalDivider()
 
@@ -734,6 +789,10 @@ private fun RecipeDetailScreen(
             )
         }
     ) { innerPadding ->
+        val context = LocalContext.current
+        // Path is stable per recipe id; do not cache `exists()` — that would stay false if the file
+        // appears later (e.g. after sync) while the viewer stays open.
+        val recipePhotoFile = remember(recipe.id) { RecipePhotoStorage.localJpegFile(context, recipe.id) }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -742,13 +801,20 @@ private fun RecipeDetailScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-                if (recipe.description.isNotBlank()) {
-                    LinkedText(
-                        text = recipe.description,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                if (recipePhotoFile.exists()) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(recipePhotoFile)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = "Opskriftsbillede",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 280.dp)
+                            .clip(RoundedCornerShape(12.dp)),
+                        contentScale = ContentScale.Crop,
                     )
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
 
                 if (recipe.rating > 0) {
@@ -769,27 +835,79 @@ private fun RecipeDetailScreen(
                     planServings.toDouble() / recipe.servings else 1.0
                 val effectiveServings = if (planServings > 0) planServings else recipe.servings
 
-                val metaItems = buildList {
-                    if (recipe.courseType.isNotBlank()) add("Kategori" to recipe.courseType)
-                    if (effectiveServings > 0) add("Antal personer" to effectiveServings.toString())
-                    if (recipe.prepTimeMinutes > 0) add("Tilberedningstid" to "${recipe.prepTimeMinutes} min")
-                    if (recipe.totalTimeMinutes > 0) add("Samlet tid" to "${recipe.totalTimeMinutes} min")
+                val summaryTopRow = effectiveServings > 0 || recipe.courseType.isNotBlank()
+                val summaryTimeRow =
+                    recipe.prepTimeMinutes > 0 || recipe.totalTimeMinutes > 0
+                val secondaryMetaItems = buildList {
                     if (recipe.durability.isNotBlank()) add("Holdbarhed" to recipe.durability)
                 }
-                if (metaItems.isNotEmpty()) {
+                if (summaryTopRow || summaryTimeRow || secondaryMetaItems.isNotEmpty()) {
+                    val isDarkRecipeTheme =
+                        MaterialTheme.colorScheme.surface.luminance() < 0.5f
+                    val summaryContainerColor =
+                        if (isDarkRecipeTheme) Color.Transparent else Color.White
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(
-                                alpha = 0.4f
-                            )
-                        ),
+                        colors = CardDefaults.cardColors(containerColor = summaryContainerColor),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                     ) {
                         Column(
                             modifier = Modifier.padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            metaItems.forEach { (label, value) ->
+                            if (summaryTopRow) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = if (effectiveServings > 0) {
+                                            "$effectiveServings personer"
+                                        } else {
+                                            ""
+                                        },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                    Text(
+                                        text = recipe.courseType,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            }
+                            if (summaryTimeRow) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = if (recipe.prepTimeMinutes > 0) {
+                                            "Tilberedningstid ${recipe.prepTimeMinutes} min"
+                                        } else {
+                                            ""
+                                        },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                    Text(
+                                        text = if (recipe.totalTimeMinutes > 0) {
+                                            "Samlet tid ${recipe.totalTimeMinutes} min"
+                                        } else {
+                                            ""
+                                        },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            }
+                            secondaryMetaItems.forEach { (label, value) ->
                                 Row {
                                     Text(
                                         text = label,
@@ -807,6 +925,15 @@ private fun RecipeDetailScreen(
                             }
                         }
                     }
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                if (recipe.description.isNotBlank()) {
+                    LinkedText(
+                        text = recipe.description,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Spacer(modifier = Modifier.height(16.dp))
                 }
 
@@ -1056,26 +1183,6 @@ private fun LinkedText(
         color = color,
         modifier = modifier,
     )
-}
-
-@Suppress("FunctionNaming")
-@Composable
-private fun RatingBar(rating: Int, onRatingChange: (Int) -> Unit) {
-    Row {
-        (1..5).forEach { star ->
-            IconButton(
-                onClick = { onRatingChange(if (rating == star) 0 else star) },
-                modifier = Modifier.size(36.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Star,
-                    contentDescription = "$star stjerner",
-                    tint = if (star <= rating) Color(0xFFFFC107) else MaterialTheme.colorScheme.outlineVariant,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-        }
-    }
 }
 
 private sealed interface FlatIngredientItem {

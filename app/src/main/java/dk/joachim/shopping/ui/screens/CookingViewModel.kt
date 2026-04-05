@@ -99,6 +99,8 @@ class CookingViewModel : ViewModel() {
         val viewingRecipe: Recipe? = null,
         val viewingMenuPlanId: String? = null,
         val editingRecipe: Recipe? = null,
+        /** Used when saving: if a photo was removed during edit, server image must be cleared explicitly. */
+        val hadRecipePhotoWhenEditorOpened: Boolean = false,
         val showImportRecipeDialog: Boolean = false,
         val importRecipeName: String = "",
         val importRecipeIngredients: String = "",
@@ -411,6 +413,7 @@ class CookingViewModel : ViewModel() {
                 importRecipeIngredients = "",
                 importRecipeInstructions = "",
                 editingRecipe = recipe,
+                hadRecipePhotoWhenEditorOpened = false,
             )
         }
     }
@@ -450,6 +453,7 @@ class CookingViewModel : ViewModel() {
                 viewingRecipe = null,
                 viewingMenuPlanId = null,
                 editingRecipe = null,
+                hadRecipePhotoWhenEditorOpened = false,
             )
         }
         viewModelScope.launch { repository.syncMenuPlans() }
@@ -463,22 +467,40 @@ class CookingViewModel : ViewModel() {
 
     fun startEditingFromViewer() {
         val recipe = _extra.value.viewingRecipe ?: return
-        _extra.update { it.copy(viewingRecipe = null, editingRecipe = recipe) }
+        _extra.update {
+            it.copy(
+                viewingRecipe = null,
+                editingRecipe = recipe,
+                hadRecipePhotoWhenEditorOpened = repository.hasLocalRecipePhoto(recipe.id),
+            )
+        }
     }
 
     // ── Recipe editing ────────────────────────────────────────────────────────
 
-    fun openRecipeEditor(recipe: Recipe) = _extra.update { it.copy(editingRecipe = recipe) }
+    fun openRecipeEditor(recipe: Recipe) = _extra.update {
+        it.copy(
+            editingRecipe = recipe,
+            hadRecipePhotoWhenEditorOpened = repository.hasLocalRecipePhoto(recipe.id),
+        )
+    }
 
     fun dismissRecipeEditor() {
         val extra = _extra.value
-        _extra.update { it.copy(editingRecipe = null, viewingRecipe = extra.editingRecipe) }
+        _extra.update {
+            it.copy(
+                editingRecipe = null,
+                viewingRecipe = extra.editingRecipe,
+                hadRecipePhotoWhenEditorOpened = false,
+            )
+        }
     }
 
     fun updateEditingRecipe(recipe: Recipe) = _extra.update { it.copy(editingRecipe = recipe) }
 
     fun saveEditingRecipe() {
-        val recipe = _extra.value.editingRecipe ?: return
+        val extraBefore = _extra.value
+        val recipe = extraBefore.editingRecipe ?: return
         val trimmed = recipe.copy(
             name = recipe.name.trim(),
             description = recipe.description.trim(),
@@ -502,8 +524,16 @@ class CookingViewModel : ViewModel() {
                 s.copy(title = s.title.trim(), steps = s.steps.map { it.trim() })
             },
         )
-        repository.updateRecipe(trimmed)
-        _extra.update { it.copy(editingRecipe = null, viewingRecipe = trimmed) }
+        val clearRecipeImageOnServer =
+            extraBefore.hadRecipePhotoWhenEditorOpened && !repository.hasLocalRecipePhoto(trimmed.id)
+        repository.updateRecipe(trimmed, clearRecipeImageOnServer = clearRecipeImageOnServer)
+        _extra.update {
+            it.copy(
+                editingRecipe = null,
+                viewingRecipe = trimmed,
+                hadRecipePhotoWhenEditorOpened = false,
+            )
+        }
     }
 
     fun addIngredientSection() {

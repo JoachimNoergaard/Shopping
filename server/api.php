@@ -168,6 +168,7 @@ $db->exec('CREATE TABLE IF NOT EXISTS recipes (
     ingredient_sections  TEXT         NOT NULL,
     instruction_sections TEXT         NOT NULL,
     tips                 TEXT         NOT NULL,
+    image_jpeg           MEDIUMBLOB   NULL,
     created_at           BIGINT       NOT NULL,
     updated_at           BIGINT       NOT NULL,
     PRIMARY KEY (id),
@@ -189,6 +190,8 @@ foreach ([
 ] as $sql) {
     try { $db->exec($sql); } catch (PDOException $e) { /* already exists */ }
 }
+
+try { $db->exec('ALTER TABLE recipes ADD COLUMN image_jpeg MEDIUMBLOB NULL'); } catch (PDOException $e) { /* already exists */ }
 
 $db->exec('CREATE TABLE IF NOT EXISTS menu_plans (
     id          VARCHAR(36)  NOT NULL,
@@ -281,7 +284,7 @@ function menuPlanToJson(PDO $db, array $row): array
 
 function recipeToJson(array $row): array
 {
-    return [
+    $out = [
         'id'                  => $row['id'],
         'profileId'           => $row['profile_id'],
         'name'                => $row['name'],
@@ -298,6 +301,11 @@ function recipeToJson(array $row): array
         'tips'                => $row['tips'] ?? '',
         'createdAt'           => (int) $row['created_at'],
     ];
+    $jpg = $row['image_jpeg'] ?? null;
+    if ($jpg !== null && $jpg !== '') {
+        $out['imageBase64'] = base64_encode($jpg);
+    }
+    return $out;
 }
 
 // ── Router ─────────────────────────────────────────────────────────────────
@@ -695,6 +703,20 @@ if ($method === 'PUT' && count($segments) === 4 && $segments[0] === 'profile' &&
         $body['createdAt'] ?? $now,
         $now,
     ]);
+    if (array_key_exists('imageBase64', $body)) {
+        $raw = $body['imageBase64'];
+        if ($raw === null || $raw === '') {
+            $db->prepare('UPDATE recipes SET image_jpeg = NULL WHERE id = ? AND profile_id = ?')->execute([$id, $profileId]);
+        } else {
+            $bin = base64_decode((string) $raw, true);
+            if ($bin === false) {
+                json_out(['error' => 'invalid imageBase64'], 400);
+            }
+            // Plain execute is more reliable than PDO::PARAM_LOB for MySQL BLOBs on many hosts.
+            $db->prepare('UPDATE recipes SET image_jpeg = ? WHERE id = ? AND profile_id = ?')
+               ->execute([$bin, $id, $profileId]);
+        }
+    }
     $stmt = $db->prepare('SELECT * FROM recipes WHERE id = ?');
     $stmt->execute([$id]);
     json_out(recipeToJson($stmt->fetch()));

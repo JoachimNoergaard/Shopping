@@ -136,7 +136,7 @@ object RemoteDataSource {
     suspend fun getRecipes(profileId: String): List<ApiRecipe>? =
         runCatching { api.getRecipes(profileId) }.getOrNull()
 
-    suspend fun upsertRecipe(recipe: Recipe): Boolean =
+    suspend fun upsertRecipe(recipe: Recipe, imageBase64: String? = null): Boolean =
         runCatching {
             api.upsertRecipe(
                 recipe.profileId,
@@ -157,6 +157,7 @@ object RemoteDataSource {
                     instructionSections = recipe.instructionSections,
                     tips = recipe.tips,
                     createdAt = recipe.createdAt,
+                    imageBase64 = imageBase64,
                 )
             )
         }.isSuccess
