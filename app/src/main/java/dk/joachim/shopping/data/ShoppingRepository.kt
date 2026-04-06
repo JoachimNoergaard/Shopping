@@ -217,13 +217,14 @@ object ShoppingRepository {
         prefs.edit().putString(KEY_RECIPES, json.encodeToString(recipes)).apply()
     }
 
-    fun addRecipe(name: String, description: String = "") {
+    fun addRecipe(name: String, description: String = "", courseType: String = "") {
         val profileId = getOrCreateProfileId()
         val recipe = Recipe(
             id = UUID.randomUUID().toString(),
             profileId = profileId,
             name = name,
             description = description,
+            courseType = courseType.trim(),
         )
         addRecipe(recipe)
     }
@@ -233,28 +234,47 @@ object ShoppingRepository {
         val updated = _recipes.value + normalized
         _recipes.value = updated
         saveRecipes(updated)
-        scope.launch {
-            RemoteDataSource.upsertRecipe(normalized, imagePayloadForUpsert(normalized.id, false))
-        }
+        scope.launch { pushRecipeToServer(normalized, clearRecipeImageOnServer = false) }
     }
 
     fun hasLocalRecipePhoto(recipeId: String): Boolean =
         RecipePhotoStorage.hasPhoto(appContext, recipeId)
 
+    fun hadRecipeImageWhenOpeningEditor(recipe: Recipe): Boolean =
+        RecipePhotoStorage.hasPhoto(appContext, recipe.id) || !recipe.imageUrl.isNullOrBlank()
+
     /**
+     * Persists locally, uploads to the server (including image when applicable), then returns the merged recipe
+     * (e.g. with [Recipe.imageUrl] after a successful image upload). Must be called from a coroutine.
+     *
      * @param clearRecipeImageOnServer When true, sends an empty image payload so the server clears the photo.
      *        When false, sends Base64 only if a local JPEG exists; otherwise omits `imageBase64` so the server keeps its copy.
      */
-    fun updateRecipe(recipe: Recipe, clearRecipeImageOnServer: Boolean = false) {
+    suspend fun updateRecipe(recipe: Recipe, clearRecipeImageOnServer: Boolean = false): Recipe {
         val normalized = recipe.withIngredientNamesFirstLetterCapitalized()
         _recipes.update { list -> list.map { if (it.id == normalized.id) normalized else it } }
         saveRecipes(_recipes.value)
-        scope.launch {
-            RemoteDataSource.upsertRecipe(
-                normalized,
-                imagePayloadForUpsert(normalized.id, clearRecipeImageOnServer),
-            )
+        withContext(Dispatchers.IO) {
+            pushRecipeToServer(normalized, clearRecipeImageOnServer)
         }
+        return findRecipeById(normalized.id) ?: normalized
+    }
+
+    private suspend fun pushRecipeToServer(recipe: Recipe, clearRecipeImageOnServer: Boolean) {
+        val payload = imagePayloadForUpsert(recipe.id, clearRecipeImageOnServer)
+        val apiRecipe = RemoteDataSource.upsertRecipe(recipe, payload) ?: return
+        var merged = apiRecipe.toRecipe().withIngredientNamesFirstLetterCapitalized()
+        if (merged.linkedRecipeIds.isEmpty() && recipe.linkedRecipeIds.isNotEmpty()) {
+            merged = merged.copy(linkedRecipeIds = recipe.linkedRecipeIds)
+        }
+        if (payload != null) {
+            when {
+                payload.isEmpty() -> { /* cleared on server */ }
+                else -> RecipePhotoStorage.deletePhoto(appContext, recipe.id)
+            }
+        }
+        _recipes.update { list -> list.map { if (it.id == merged.id) merged else it } }
+        saveRecipes(_recipes.value)
     }
 
     private fun imagePayloadForUpsert(recipeId: String, clearOnServer: Boolean): String? {
@@ -269,7 +289,12 @@ object ShoppingRepository {
     fun deleteRecipe(id: String) {
         val recipe = _recipes.value.firstOrNull { it.id == id } ?: return
         RecipePhotoStorage.deletePhoto(appContext, id)
-        val updated = _recipes.value.filter { it.id != id }
+        val beforeById = _recipes.value.associateBy { it.id }
+        val updated = _recipes.value
+            .filter { it.id != id }
+            .map { r ->
+                r.copy(linkedRecipeIds = r.linkedRecipeIds.filter { it != id })
+            }
         _recipes.value = updated
         saveRecipes(updated)
         // Remove this recipe from any menu plans that reference it
@@ -280,6 +305,12 @@ object ShoppingRepository {
         saveMenuPlans(updatedPlans)
         scope.launch {
             RemoteDataSource.deleteRecipe(recipe.profileId, id)
+            updated.forEach { r ->
+                val old = beforeById[r.id] ?: return@forEach
+                if (old.linkedRecipeIds != r.linkedRecipeIds) {
+                    pushRecipeToServer(r, clearRecipeImageOnServer = false)
+                }
+            }
             updatedPlans.filter { id !in it.recipeIds && _menuPlans.value.any { p -> p.id == it.id && id in p.recipeIds } }
                 .forEach { RemoteDataSource.upsertMenuPlan(it) }
         }
@@ -352,13 +383,22 @@ object ShoppingRepository {
     suspend fun syncRecipes() {
         val profileId = getOrCreateProfileId()
         val remote = RemoteDataSource.getRecipes(profileId) ?: return
+        val localById = _recipes.value.associateBy { it.id }
         val recipes = withContext(Dispatchers.IO) {
-            remote.forEach { api ->
-                RecipePhotoStorage.saveFromBase64(appContext, api.id, api.imageBase64)
-            }
             val ids = remote.map { it.id }.toSet()
             RecipePhotoStorage.deleteOrphanPhotos(appContext, ids)
-            remote.map { it.toRecipe().withIngredientNamesFirstLetterCapitalized() }
+            remote.map { api ->
+                val fromRemote = api.toRecipe().withIngredientNamesFirstLetterCapitalized()
+                val local = localById[fromRemote.id]
+                if (local != null &&
+                    fromRemote.linkedRecipeIds.isEmpty() &&
+                    local.linkedRecipeIds.isNotEmpty()
+                ) {
+                    fromRemote.copy(linkedRecipeIds = local.linkedRecipeIds)
+                } else {
+                    fromRemote
+                }
+            }
         }
         _recipes.value = recipes
         saveRecipes(recipes)

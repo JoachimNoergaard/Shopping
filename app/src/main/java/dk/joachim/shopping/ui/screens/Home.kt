@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
@@ -97,6 +98,8 @@ fun GroceryListsScreen(
     val cookingViewModel: CookingViewModel = viewModel()
     val cookingUiState by cookingViewModel.uiState.collectAsStateWithLifecycle()
     val isRecipeFullScreen = cookingUiState.viewingRecipe != null || cookingUiState.editingRecipe != null
+    val showCookingRecipeSearch =
+        cookingUiState.recipeSearchFieldFocused || cookingUiState.searchQuery.isNotBlank()
     val pendingTimerNav by ShoppingRepository.pendingTimerNavigation.collectAsStateWithLifecycle()
 
     LaunchedEffect(pendingTimerNav) {
@@ -160,34 +163,44 @@ fun GroceryListsScreen(
                         )
                     },
                     actions = {
-                        if (selectedTab != 1) {
-                            Box {
-                                IconButton(onClick = { showMenu = true }) {
+                        when {
+                            selectedTab == 1 && showCookingRecipeSearch && !isRecipeFullScreen -> {
+                                IconButton(onClick = cookingViewModel::dismissRecipeSearch) {
                                     Icon(
-                                        imageVector = Icons.Default.MoreVert,
-                                        contentDescription = "Mere"
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Luk søgning",
                                     )
                                 }
-                                DropdownMenu(
-                                    expanded = showMenu,
-                                    onDismissRequest = { showMenu = false }
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.profil)) },
-                                        onClick = { showMenu = false; onNavigateToProfile() }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.categories)) },
-                                        onClick = { showMenu = false; onNavigateToCategories() }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.goods)) },
-                                        onClick = { showMenu = false; onNavigateToCatalog() }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.shops)) },
-                                        onClick = { showMenu = false; onNavigateToShops() }
-                                    )
+                            }
+                            selectedTab != 1 -> {
+                                Box {
+                                    IconButton(onClick = { showMenu = true }) {
+                                        Icon(
+                                            imageVector = Icons.Default.MoreVert,
+                                            contentDescription = "Mere"
+                                        )
+                                    }
+                                    DropdownMenu(
+                                        expanded = showMenu,
+                                        onDismissRequest = { showMenu = false }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.profil)) },
+                                            onClick = { showMenu = false; onNavigateToProfile() }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.categories)) },
+                                            onClick = { showMenu = false; onNavigateToCategories() }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.goods)) },
+                                            onClick = { showMenu = false; onNavigateToCatalog() }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.shops)) },
+                                            onClick = { showMenu = false; onNavigateToShops() }
+                                        )
+                                    }
                                 }
                             }
                         }

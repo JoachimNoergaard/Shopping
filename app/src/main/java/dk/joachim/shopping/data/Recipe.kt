@@ -38,4 +38,8 @@ data class Recipe(
     val instructionSections: List<InstructionSection> = emptyList(),
     val tips: String = "",
     val createdAt: Long = System.currentTimeMillis(),
+    /** Absolute URL of the recipe photo on the server, if any. */
+    val imageUrl: String? = null,
+    /** Other recipes this one links to (for “see also” navigation). */
+    val linkedRecipeIds: List<String> = emptyList(),
 )

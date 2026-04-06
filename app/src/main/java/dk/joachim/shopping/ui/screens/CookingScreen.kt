@@ -25,6 +25,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -35,6 +37,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -59,6 +62,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -87,6 +91,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.graphicsLayer
@@ -123,6 +128,7 @@ import dk.joachim.shopping.data.RecipeStepTimer
 import dk.joachim.shopping.data.RecipeStepTimerEntry
 import dk.joachim.shopping.data.capitalizeIngredientFirstLetter
 import dk.joachim.shopping.data.parseInstructionMinutes
+import java.io.File
 
 @Suppress("LongMethod", "FunctionNaming")
 @Composable
@@ -131,11 +137,16 @@ fun CookingScreen(
     paddingValues: PaddingValues,
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val recipeCourseTypeSuggestions = remember(uiState.recipes) {
+        distinctRecipeCourseTypes(uiState.recipes)
+    }
 
     if (uiState.editingRecipe != null) {
         BackHandler(onBack = viewModel::dismissRecipeEditor)
         RecipeEditorScreen(
             recipe = uiState.editingRecipe!!,
+            courseTypeOptions = recipeCourseTypeSuggestions,
+            allRecipesForPicker = uiState.recipes,
             onRecipeChange = viewModel::updateEditingRecipe,
             onSave = viewModel::saveEditingRecipe,
             onDismiss = viewModel::dismissRecipeEditor,
@@ -158,9 +169,10 @@ fun CookingScreen(
     }
 
     if (uiState.viewingRecipe != null) {
-        BackHandler(onBack = viewModel::dismissRecipeViewer)
+        BackHandler(onBack = viewModel::onRecipeViewerBack)
         RecipeDetailScreen(
             recipe = uiState.viewingRecipe!!,
+            allRecipes = uiState.recipes,
             completedSteps = uiState.completedSteps,
             showStepProgress = uiState.viewingMenuPlanId != null,
             onToggleStep = viewModel::toggleStepCompletion,
@@ -178,12 +190,48 @@ fun CookingScreen(
                 viewModel.createMenuPlanAndAddRecipe(name, uiState.viewingRecipe!!.id)
             },
             onEdit = viewModel::startEditingFromViewer,
-            onDismiss = viewModel::dismissRecipeViewer,
+            onOpenLinkedRecipe = viewModel::openLinkedRecipe,
+            onDismiss = viewModel::onRecipeViewerBack,
         )
         return
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
+        val showRecipeSearchList =
+            uiState.recipeSearchFieldFocused || uiState.searchQuery.isNotBlank()
+        val courseTypeOptions = remember(uiState.recipes) {
+            uiState.recipes
+                .map { it.courseType.trim() }
+                .filter { it.isNotBlank() }
+                .distinctBy { it.lowercase() }
+                .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it })
+        }
+        val recipesForSearchList = remember(
+            uiState.recipes,
+            uiState.searchQuery,
+            uiState.recipeCourseTypeFilter,
+            showRecipeSearchList,
+        ) {
+            if (!showRecipeSearchList) {
+                emptyList()
+            } else {
+                var base =
+                    if (uiState.searchQuery.isBlank()) uiState.recipes
+                    else {
+                        uiState.recipes.filter {
+                            it.name.contains(uiState.searchQuery, ignoreCase = true)
+                        }
+                    }
+                val typeFilter = uiState.recipeCourseTypeFilter
+                if (!typeFilter.isNullOrBlank()) {
+                    base = base.filter {
+                        it.courseType.trim().equals(typeFilter, ignoreCase = true)
+                    }
+                }
+                base.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+            }
+        }
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -192,22 +240,57 @@ fun CookingScreen(
         ) {
             Spacer(modifier = Modifier.height(8.dp))
 
+            val focusManager = LocalFocusManager.current
+            LaunchedEffect(Unit) {
+                viewModel.clearRecipeSearchFocus.collect {
+                    focusManager.clearFocus()
+                }
+            }
             OutlinedTextField(
                 value = uiState.searchQuery,
                 onValueChange = viewModel::updateSearchQuery,
                 label = { Text("Søg i opskrifter") },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                trailingIcon = {
-                    if (uiState.searchQuery.isNotEmpty()) {
-                        IconButton(onClick = { viewModel.updateSearchQuery("") }) {
-                            Icon(Icons.Default.Close, contentDescription = "Ryd")
-                        }
-                    }
-                },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { viewModel.updateRecipeSearchFieldFocused(it.isFocused) },
             )
+
+            if (showRecipeSearchList && courseTypeOptions.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    item(key = "course_all") {
+                        FilterChip(
+                            selected = uiState.recipeCourseTypeFilter.isNullOrBlank(),
+                            onClick = { viewModel.updateRecipeCourseTypeFilter(null) },
+                            label = { Text("Alle") },
+                        )
+                    }
+                    items(
+                        items = courseTypeOptions,
+                        key = { it.lowercase() },
+                    ) { type ->
+                        FilterChip(
+                            selected = uiState.recipeCourseTypeFilter?.equals(type, ignoreCase = true) == true,
+                            onClick = {
+                                viewModel.updateRecipeCourseTypeFilter(
+                                    if (uiState.recipeCourseTypeFilter?.equals(type, ignoreCase = true) == true) {
+                                        null
+                                    } else {
+                                        type
+                                    }
+                                )
+                            },
+                            label = { Text(type) },
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(16.dp))
 
@@ -224,13 +307,43 @@ fun CookingScreen(
                 LazyColumn(
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(bottom = 88.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    if (uiState.searchQuery.isBlank() && uiState.menuPlans.isNotEmpty()) {
+                    if (showRecipeSearchList) {
+                        if (recipesForSearchList.isEmpty()) {
+                            item(key = "empty_search") {
+                                EmptyMenuPlansState(
+                                    isFiltered = uiState.searchQuery.isNotBlank() ||
+                                        !uiState.recipeCourseTypeFilter.isNullOrBlank(),
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        } else {
+                            itemsIndexed(
+                                recipesForSearchList,
+                                key = { _, it -> "recipe_${it.id}" },
+                            ) { index, recipe ->
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    if (index > 0) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                    }
+                                    SearchRecipeRow(
+                                        recipe = recipe,
+                                        onClick = { viewModel.openRecipeViewer(recipe) },
+                                        onDelete = { viewModel.requestDeleteRecipe(recipe) },
+                                    )
+                                }
+                            }
+                        }
+                    } else if (uiState.menuPlans.isNotEmpty()) {
                         itemsIndexed(
                             uiState.menuPlans,
-                            key = { _, it -> "plan_${it.id}" }) { _, plan ->
-                            MenuPlanCard(
+                            key = { _, it -> "plan_${it.id}" },
+                        ) { index, plan ->
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                if (index > 0) {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                }
+                                MenuPlanCard(
                                 plan = plan,
                                 recipes = uiState.recipesForPlan(plan),
                                 isExpanded = uiState.expandedPlanId == plan.id,
@@ -251,32 +364,7 @@ fun CookingScreen(
                                 groceryListName = uiState.targetGroceryListName,
                                 canAddToGroceryList = uiState.canAddIngredientsToGroceryList,
                                 onAddIngredientToGroceryList = viewModel::addMergedIngredientToGroceryList,
-                            )
-                        }
-                    }
-
-                    if (uiState.searchQuery.isNotBlank()) {
-                        if (uiState.filteredRecipes.isEmpty()) {
-                            item(key = "empty_search") {
-                                EmptyMenuPlansState(
-                                    isFiltered = true,
-                                    modifier = Modifier.fillMaxWidth(),
                                 )
-                            }
-                        } else {
-                            itemsIndexed(
-                                uiState.filteredRecipes,
-                                key = { _, it -> "recipe_${it.id}" }) { index, recipe ->
-                                Column(modifier = Modifier.fillMaxWidth()) {
-                                    if (index > 0) {
-                                        Spacer(modifier = Modifier.height(12.dp))
-                                    }
-                                    SearchRecipeRow(
-                                        recipe = recipe,
-                                        onClick = { viewModel.openRecipeViewer(recipe) },
-                                        onDelete = { viewModel.requestDeleteRecipe(recipe) },
-                                    )
-                                }
                             }
                         }
                     }
@@ -310,8 +398,11 @@ fun CookingScreen(
         AddRecipeDialog(
             name = uiState.newRecipeName,
             description = uiState.newRecipeDescription,
+            courseType = uiState.newRecipeCourseType,
+            courseTypeOptions = recipeCourseTypeSuggestions,
             onNameChange = viewModel::updateNewRecipeName,
             onDescriptionChange = viewModel::updateNewRecipeDescription,
+            onCourseTypeChange = viewModel::updateNewRecipeCourseType,
             onConfirm = viewModel::addRecipe,
             onDismiss = viewModel::dismissAddRecipeDialog
         )
@@ -320,13 +411,16 @@ fun CookingScreen(
     if (uiState.showImportRecipeDialog) {
         ImportRecipeDialog(
             name = uiState.importRecipeName,
+            courseType = uiState.importRecipeCourseType,
             ingredients = uiState.importRecipeIngredients,
             instructions = uiState.importRecipeInstructions,
             onNameChange = viewModel::updateImportRecipeName,
+            onCourseTypeChange = viewModel::updateImportRecipeCourseType,
             onIngredientsChange = viewModel::updateImportRecipeIngredients,
             onInstructionsChange = viewModel::updateImportRecipeInstructions,
             onConfirm = viewModel::importRecipe,
             onDismiss = viewModel::dismissImportRecipeDialog,
+            courseTypeOptions = recipeCourseTypeSuggestions,
         )
     }
 
@@ -401,6 +495,117 @@ fun CookingScreen(
     }
 }
 
+private fun distinctRecipeCourseTypes(recipes: List<Recipe>): List<String> =
+    recipes.asSequence()
+        .map { it.courseType.trim() }
+        .filter { it.isNotBlank() }
+        .distinctBy { it.lowercase() }
+        .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it })
+        .toList()
+
+@Suppress("FunctionNaming")
+@Composable
+private fun RecipeCourseTypeField(
+    courseType: String,
+    onCourseTypeChange: (String) -> Unit,
+    existingTypes: List<String>,
+    modifier: Modifier = Modifier,
+    label: String = "Kategori",
+) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = courseType,
+            onValueChange = { onCourseTypeChange(it.trimStart()) },
+            label = { Text(label) },
+            placeholder = { Text("Vælg nedenfor eller skriv ny") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (existingTypes.isNotEmpty()) {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                items(
+                    items = existingTypes,
+                    key = { it.lowercase() },
+                ) { type ->
+                    FilterChip(
+                        selected = courseType.equals(type, ignoreCase = true),
+                        onClick = { onCourseTypeChange(type) },
+                        label = { Text(type) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Suppress("FunctionNaming")
+@Composable
+private fun AddLinkedRecipePickerDialog(
+    recipes: List<Recipe>,
+    onPick: (Recipe) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(recipes, query) {
+        val q = query.trim()
+        if (q.isEmpty()) recipes
+        else recipes.filter { it.name.contains(q, ignoreCase = true) }
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Vælg opskrift") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    label = { Text("Søg") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (filtered.isEmpty()) {
+                    Text(
+                        text = "Ingen opskrifter fundet",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 280.dp),
+                    ) {
+                        items(
+                            items = filtered,
+                            key = { it.id },
+                        ) { r ->
+                            TextButton(
+                                onClick = { onPick(r) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    text = r.name,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Annuller") }
+        },
+    )
+}
+
 // ── Recipe editor (full-screen) ────────────────────────────────────────────────
 
 @Suppress("FunctionNaming", "LongMethod", "LongParameterList")
@@ -408,6 +613,8 @@ fun CookingScreen(
 @Composable
 private fun RecipeEditorScreen(
     recipe: Recipe,
+    courseTypeOptions: List<String>,
+    allRecipesForPicker: List<Recipe>,
     onRecipeChange: (Recipe) -> Unit,
     onSave: () -> Unit,
     onDismiss: () -> Unit,
@@ -435,6 +642,7 @@ private fun RecipeEditorScreen(
     ) { uri ->
         if (uri != null && RecipePhotoStorage.saveFromUri(context, recipe.id, uri)) {
             hasRecipePhoto = true
+            onRecipeChange(recipe.copy(imageUrl = null))
         }
     }
 
@@ -448,7 +656,11 @@ private fun RecipeEditorScreen(
                     }
                 },
                 actions = {
-                    TextButton(onClick = onSave) {
+                    TextButton(
+                        onClick = onSave,
+                        enabled = recipe.name.trim().isNotBlank() &&
+                            recipe.courseType.trim().isNotBlank(),
+                    ) {
                         Text("Gem", fontWeight = FontWeight.SemiBold)
                     }
                 }
@@ -480,12 +692,14 @@ private fun RecipeEditorScreen(
                     .clip(RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
             ) {
-                if (hasRecipePhoto) {
+                val editorImageData: Any? = when {
+                    hasRecipePhoto -> RecipePhotoStorage.localJpegFile(context, recipe.id)
+                    !recipe.imageUrl.isNullOrBlank() -> recipe.imageUrl
+                    else -> null
+                }
+                if (editorImageData != null) {
                     AsyncImage(
-                        model = ImageRequest.Builder(context)
-                            .data(RecipePhotoStorage.localJpegFile(context, recipe.id))
-                            .crossfade(true)
-                            .build(),
+                        model = recipeImageRequest(context, editorImageData),
                         contentDescription = "Opskriftsbillede",
                         modifier = Modifier
                             .fillMaxWidth()
@@ -517,11 +731,12 @@ private fun RecipeEditorScreen(
                 ) {
                     Text("Tilføj billede")
                 }
-                if (hasRecipePhoto) {
+                if (hasRecipePhoto || !recipe.imageUrl.isNullOrBlank()) {
                     TextButton(
                         onClick = {
                             RecipePhotoStorage.deletePhoto(context, recipe.id)
                             hasRecipePhoto = false
+                            onRecipeChange(recipe.copy(imageUrl = null))
                         },
                     ) {
                         Text("Fjern billede")
@@ -538,30 +753,27 @@ private fun RecipeEditorScreen(
                 modifier = Modifier.fillMaxWidth()
             )
 
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = if (recipe.servings > 0) recipe.servings.toString() else " ",
-                    onValueChange = {
-                        onRecipeChange(
-                            recipe.copy(
-                                servings = it.trim().toIntOrNull() ?: 0
-                            )
+            OutlinedTextField(
+                value = if (recipe.servings > 0) recipe.servings.toString() else " ",
+                onValueChange = {
+                    onRecipeChange(
+                        recipe.copy(
+                            servings = it.trim().toIntOrNull() ?: 0
                         )
-                    },
-                    label = { Text("Antal personer") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.weight(1f)
-                )
-                OutlinedTextField(
-                    value = recipe.courseType.ifBlank { " " },
-                    onValueChange = { onRecipeChange(recipe.copy(courseType = it.trimStart())) },
-                    label = { Text("Kategori") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                    modifier = Modifier.weight(1f)
-                )
-            }
+                    )
+                },
+                label = { Text("Antal personer") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            RecipeCourseTypeField(
+                courseType = recipe.courseType,
+                onCourseTypeChange = { onRecipeChange(recipe.copy(courseType = it)) },
+                existingTypes = courseTypeOptions,
+                label = "Type af ret (påkrævet)",
+                modifier = Modifier.fillMaxWidth(),
+            )
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
@@ -651,6 +863,70 @@ private fun RecipeEditorScreen(
                 modifier = Modifier.fillMaxWidth()
             )
 
+            HorizontalDivider()
+
+            SectionLabel("Relaterede opskrifter")
+            var showLinkedRecipePicker by remember { mutableStateOf(false) }
+            if (showLinkedRecipePicker) {
+                AddLinkedRecipePickerDialog(
+                    recipes = allRecipesForPicker
+                        .filter { it.id != recipe.id && it.id !in recipe.linkedRecipeIds }
+                        .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name }),
+                    onPick = { picked ->
+                        if (picked.id !in recipe.linkedRecipeIds) {
+                            onRecipeChange(
+                                recipe.copy(linkedRecipeIds = recipe.linkedRecipeIds + picked.id),
+                            )
+                        }
+                        showLinkedRecipePicker = false
+                    },
+                    onDismiss = { showLinkedRecipePicker = false },
+                )
+            }
+            val linkedForEditor = remember(recipe.linkedRecipeIds, allRecipesForPicker) {
+                recipe.linkedRecipeIds
+                    .mapNotNull { id -> allRecipesForPicker.firstOrNull { it.id == id } }
+                    .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+            }
+            linkedForEditor.forEach { linked ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = linked.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp),
+                    )
+                    IconButton(
+                        onClick = {
+                            onRecipeChange(
+                                recipe.copy(
+                                    linkedRecipeIds = recipe.linkedRecipeIds.filter { it != linked.id },
+                                ),
+                            )
+                        },
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = "Fjern link til ${linked.name}",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            TextButton(
+                onClick = { showLinkedRecipePicker = true },
+                enabled = allRecipesForPicker.any { it.id != recipe.id && it.id !in recipe.linkedRecipeIds },
+            ) {
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Tilføj opskrift")
+            }
+
             Spacer(modifier = Modifier.height(32.dp))
         }
     }
@@ -738,6 +1014,7 @@ private fun RecipeStepTimerInline(
 @Composable
 private fun RecipeDetailScreen(
     recipe: Recipe,
+    allRecipes: List<Recipe>,
     completedSteps: List<CompletedStep> = emptyList(),
     showStepProgress: Boolean = false,
     onToggleStep: (sectionIndex: Int, stepIndex: Int) -> Unit = { _, _ -> },
@@ -747,6 +1024,7 @@ private fun RecipeDetailScreen(
     onAddToPlan: (planId: String) -> Unit = {},
     onCreatePlanAndAdd: (name: String) -> Unit = {},
     onEdit: () -> Unit,
+    onOpenLinkedRecipe: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var showPlanPicker by remember { mutableStateOf(false) }
@@ -765,6 +1043,12 @@ private fun RecipeDetailScreen(
             },
             onDismiss = { showPlanPicker = false },
         )
+    }
+
+    val linkedRecipes = remember(recipe.linkedRecipeIds, allRecipes) {
+        recipe.linkedRecipeIds
+            .mapNotNull { id -> allRecipes.firstOrNull { it.id == id } }
+            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
     }
 
     Scaffold(
@@ -801,12 +1085,14 @@ private fun RecipeDetailScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-                if (recipePhotoFile.exists()) {
+                val detailImageData: Any? = when {
+                    !recipe.imageUrl.isNullOrBlank() -> recipe.imageUrl
+                    recipePhotoFile.exists() -> recipePhotoFile
+                    else -> null
+                }
+                if (detailImageData != null) {
                     AsyncImage(
-                        model = ImageRequest.Builder(context)
-                            .data(recipePhotoFile)
-                            .crossfade(true)
-                            .build(),
+                        model = recipeImageRequest(context, detailImageData),
                         contentDescription = "Opskriftsbillede",
                         modifier = Modifier
                             .fillMaxWidth()
@@ -887,7 +1173,7 @@ private fun RecipeDetailScreen(
                                 ) {
                                     Text(
                                         text = if (recipe.prepTimeMinutes > 0) {
-                                            "Tilberedningstid ${recipe.prepTimeMinutes} min"
+                                            "Tilberedningstid: ${recipe.prepTimeMinutes} min"
                                         } else {
                                             ""
                                         },
@@ -897,7 +1183,7 @@ private fun RecipeDetailScreen(
                                     )
                                     Text(
                                         text = if (recipe.totalTimeMinutes > 0) {
-                                            "Samlet tid ${recipe.totalTimeMinutes} min"
+                                            "Samlet tid: ${recipe.totalTimeMinutes} min"
                                         } else {
                                             ""
                                         },
@@ -1117,6 +1403,42 @@ private fun RecipeDetailScreen(
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                     )
+                }
+
+                if (linkedRecipes.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(16.dp))
+                    SectionLabel("Se også")
+                    Spacer(modifier = Modifier.height(4.dp))
+                    linkedRecipes.forEach { linked ->
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { onOpenLinkedRecipe(linked.id) },
+                            color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = linked.name,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(32.dp))
@@ -2402,12 +2724,27 @@ private fun mergeQuantityStrings(quantities: List<String>): String {
     }
 }
 
+/**
+ * Coil caches by data identity; local recipe photos keep the same file path when replaced.
+ * Cache keys must incorporate [File.lastModified] so picks/sync overwrites show the new bitmap.
+ */
+private fun recipeImageRequest(context: android.content.Context, data: Any?): ImageRequest {
+    val builder = ImageRequest.Builder(context)
+        .data(data)
+        .crossfade(true)
+    if (data is File && data.isFile) {
+        val key = "${data.absolutePath}#${data.lastModified()}"
+        builder.memoryCacheKey(key)
+        builder.diskCacheKey(key)
+    }
+    return builder.build()
+}
+
 private fun buildRecipeSubtitle(recipe: Recipe, showServings: Boolean = true): String {
     val parts = mutableListOf<String>()
     if (recipe.courseType.isNotBlank()) parts += recipe.courseType
     if (recipe.totalTimeMinutes > 0) parts += "${recipe.totalTimeMinutes} min"
     if (showServings && recipe.servings > 0) parts += "${recipe.servings} pers."
-    if (recipe.rating > 0) parts += "★".repeat(recipe.rating)
     return parts.joinToString(" · ")
 }
 
@@ -2810,13 +3147,16 @@ private fun AddMenuPlanDialog(
     )
 }
 
-@Suppress("FunctionNaming")
+@Suppress("FunctionNaming", "LongParameterList")
 @Composable
 private fun AddRecipeDialog(
     name: String,
     description: String,
+    courseType: String,
+    courseTypeOptions: List<String>,
     onNameChange: (String) -> Unit,
     onDescriptionChange: (String) -> Unit,
+    onCourseTypeChange: (String) -> Unit,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -2824,7 +3164,10 @@ private fun AddRecipeDialog(
         onDismissRequest = onDismiss,
         title = { Text("Ny opskrift") },
         text = {
-            Column {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 OutlinedTextField(
                     value = name,
                     onValueChange = onNameChange,
@@ -2833,7 +3176,6 @@ private fun AddRecipeDialog(
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     modifier = Modifier.fillMaxWidth()
                 )
-                Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
                     value = description,
                     onValueChange = onDescriptionChange,
@@ -2841,10 +3183,20 @@ private fun AddRecipeDialog(
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     modifier = Modifier.fillMaxWidth()
                 )
+                RecipeCourseTypeField(
+                    courseType = courseType,
+                    onCourseTypeChange = onCourseTypeChange,
+                    existingTypes = courseTypeOptions,
+                    label = "Type af ret (påkrævet)",
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         },
         confirmButton = {
-            Button(onClick = onConfirm, enabled = name.isNotBlank()) { Text("Opret") }
+            Button(
+                onClick = onConfirm,
+                enabled = name.isNotBlank() && courseType.isNotBlank(),
+            ) { Text("Opret") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Annuller") }
@@ -2856,9 +3208,12 @@ private fun AddRecipeDialog(
 @Composable
 private fun ImportRecipeDialog(
     name: String,
+    courseType: String,
     ingredients: String,
     instructions: String,
+    courseTypeOptions: List<String>,
     onNameChange: (String) -> Unit,
+    onCourseTypeChange: (String) -> Unit,
     onIngredientsChange: (String) -> Unit,
     onInstructionsChange: (String) -> Unit,
     onConfirm: () -> Unit,
@@ -2879,6 +3234,13 @@ private fun ImportRecipeDialog(
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     modifier = Modifier.fillMaxWidth()
+                )
+                RecipeCourseTypeField(
+                    courseType = courseType,
+                    onCourseTypeChange = onCourseTypeChange,
+                    existingTypes = courseTypeOptions,
+                    label = "Type af ret (påkrævet)",
+                    modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
                     value = ingredients,
@@ -2901,7 +3263,10 @@ private fun ImportRecipeDialog(
             }
         },
         confirmButton = {
-            Button(onClick = onConfirm, enabled = name.isNotBlank()) { Text("Importér") }
+            Button(
+                onClick = onConfirm,
+                enabled = name.isNotBlank() && courseType.isNotBlank(),
+            ) { Text("Importér") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Annuller") }

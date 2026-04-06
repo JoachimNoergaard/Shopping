@@ -86,8 +86,9 @@ data class ApiRecipe(
     val instructionSections: List<InstructionSection> = emptyList(),
     val tips: String = "",
     val createdAt: Long,
-    /** Present when the recipe has a photo on the server (JPEG as Base64). */
-    val imageBase64: String? = null,
+    /** Absolute URL of the JPEG on the server (see recipe_images/ on the API host). */
+    val imageUrl: String? = null,
+    val linkedRecipeIds: List<String> = emptyList(),
 ) {
     fun toRecipe() = Recipe(
         id = id,
@@ -105,6 +106,8 @@ data class ApiRecipe(
         instructionSections = instructionSections,
         tips = tips,
         createdAt = createdAt,
+        imageUrl = imageUrl,
+        linkedRecipeIds = linkedRecipeIds,
     )
 }
 
@@ -125,6 +128,7 @@ data class UpsertRecipeRequest(
     val instructionSections: List<InstructionSection>,
     val tips: String,
     val createdAt: Long,
+    val linkedRecipeIds: List<String> = emptyList(),
     /**
      * Omit to leave the server image unchanged; use `""` to clear.
      * Non-empty: JPEG bytes as standard Base64.

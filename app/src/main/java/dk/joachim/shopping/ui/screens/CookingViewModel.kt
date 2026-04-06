@@ -13,8 +13,10 @@ import dk.joachim.shopping.data.ShoppingRepository
 import dk.joachim.shopping.data.UserCategory
 import dk.joachim.shopping.data.capitalizeIngredientFirstLetter
 import java.util.UUID
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -25,6 +27,11 @@ data class PendingRemoveRecipeFromPlan(
     val planName: String,
     val recipeId: String,
     val recipeName: String,
+)
+
+private data class RecipeViewerFrame(
+    val recipeId: String,
+    val menuPlanId: String?,
 )
 
 data class CookingUiState(
@@ -44,6 +51,7 @@ data class CookingUiState(
     val showAddRecipeDialog: Boolean = false,
     val newRecipeName: String = "",
     val newRecipeDescription: String = "",
+    val newRecipeCourseType: String = "",
     val pendingDeleteRecipe: Recipe? = null,
     val pendingRemoveRecipeFromPlan: PendingRemoveRecipeFromPlan? = null,
     val expandedPlanId: String? = null,
@@ -53,11 +61,16 @@ data class CookingUiState(
     val editingRecipe: Recipe? = null,
     val showImportRecipeDialog: Boolean = false,
     val importRecipeName: String = "",
+    val importRecipeCourseType: String = "",
     val importRecipeIngredients: String = "",
     val importRecipeInstructions: String = "",
     /** Resolved target for “add to grocery list” from last-used id, or first list. */
     val targetGroceryListName: String? = null,
     val canAddIngredientsToGroceryList: Boolean = false,
+    /** When non-null, recipe search list only shows this [Recipe.courseType] (case-insensitive). */
+    val recipeCourseTypeFilter: String? = null,
+    /** True while the recipe search field on the menu-plans screen has focus. */
+    val recipeSearchFieldFocused: Boolean = false,
 ) {
     val filteredRecipes: List<Recipe>
         get() = if (searchQuery.isBlank()) recipes
@@ -93,6 +106,7 @@ class CookingViewModel : ViewModel() {
         val showAddRecipeDialog: Boolean = false,
         val newRecipeName: String = "",
         val newRecipeDescription: String = "",
+        val newRecipeCourseType: String = "",
         val pendingDeleteRecipe: Recipe? = null,
         val pendingRemoveRecipeFromPlan: PendingRemoveRecipeFromPlan? = null,
         val expandedPlanId: String? = null,
@@ -103,11 +117,17 @@ class CookingViewModel : ViewModel() {
         val hadRecipePhotoWhenEditorOpened: Boolean = false,
         val showImportRecipeDialog: Boolean = false,
         val importRecipeName: String = "",
+        val importRecipeCourseType: String = "",
         val importRecipeIngredients: String = "",
         val importRecipeInstructions: String = "",
+        val recipeCourseTypeFilter: String? = null,
+        val recipeSearchFieldFocused: Boolean = false,
+        val recipeViewerBackStack: List<RecipeViewerFrame> = emptyList(),
     )
 
     private val _extra = MutableStateFlow(ExtraState())
+    private val _clearRecipeSearchFocus = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val clearRecipeSearchFocus = _clearRecipeSearchFocus.asSharedFlow()
     private val _userCategories = MutableStateFlow<List<UserCategory>>(emptyList())
 
     // Nested combine(3)+combine(3)+lastListId: last list id must be a flow so UI updates when the user opens another list (prefs alone does not emit).
@@ -155,6 +175,7 @@ class CookingViewModel : ViewModel() {
             showAddRecipeDialog = extra.showAddRecipeDialog,
             newRecipeName = extra.newRecipeName,
             newRecipeDescription = extra.newRecipeDescription,
+            newRecipeCourseType = extra.newRecipeCourseType,
             pendingDeleteRecipe = extra.pendingDeleteRecipe,
             pendingRemoveRecipeFromPlan = extra.pendingRemoveRecipeFromPlan,
             expandedPlanId = extra.expandedPlanId,
@@ -164,10 +185,13 @@ class CookingViewModel : ViewModel() {
             editingRecipe = extra.editingRecipe,
             showImportRecipeDialog = extra.showImportRecipeDialog,
             importRecipeName = extra.importRecipeName,
+            importRecipeCourseType = extra.importRecipeCourseType,
             importRecipeIngredients = extra.importRecipeIngredients,
             importRecipeInstructions = extra.importRecipeInstructions,
             targetGroceryListName = targetList?.name,
             canAddIngredientsToGroceryList = targetList != null,
+            recipeCourseTypeFilter = extra.recipeCourseTypeFilter,
+            recipeSearchFieldFocused = extra.recipeSearchFieldFocused,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), CookingUiState())
 
@@ -228,6 +252,26 @@ class CookingViewModel : ViewModel() {
     // ── Search ────────────────────────────────────────────────────────────────
 
     fun updateSearchQuery(query: String) = _extra.update { it.copy(searchQuery = query) }
+
+    fun updateRecipeSearchFieldFocused(focused: Boolean) =
+        _extra.update { it.copy(recipeSearchFieldFocused = focused) }
+
+    fun dismissRecipeSearch() {
+        _extra.update {
+            it.copy(
+                searchQuery = "",
+                recipeCourseTypeFilter = null,
+                recipeSearchFieldFocused = false,
+            )
+        }
+        _clearRecipeSearchFocus.tryEmit(Unit)
+    }
+
+    fun updateRecipeCourseTypeFilter(courseType: String?) =
+        _extra.update {
+            val normalized = courseType?.trim()?.takeIf { it.isNotEmpty() }
+            it.copy(recipeCourseTypeFilter = normalized)
+        }
 
     // ── Menu plan dialogs ─────────────────────────────────────────────────────
 
@@ -337,7 +381,8 @@ class CookingViewModel : ViewModel() {
         it.copy(
             showAddRecipeDialog = false,
             newRecipeName = "",
-            newRecipeDescription = ""
+            newRecipeDescription = "",
+            newRecipeCourseType = "",
         )
     }
 
@@ -345,15 +390,24 @@ class CookingViewModel : ViewModel() {
     fun updateNewRecipeDescription(desc: String) =
         _extra.update { it.copy(newRecipeDescription = desc) }
 
+    fun updateNewRecipeCourseType(courseType: String) =
+        _extra.update { it.copy(newRecipeCourseType = courseType) }
+
     fun addRecipe() {
         val name = _extra.value.newRecipeName.trim()
-        if (name.isBlank()) return
-        repository.addRecipe(name, _extra.value.newRecipeDescription.trim())
+        val courseType = _extra.value.newRecipeCourseType.trim()
+        if (name.isBlank() || courseType.isBlank()) return
+        repository.addRecipe(
+            name,
+            _extra.value.newRecipeDescription.trim(),
+            courseType = courseType,
+        )
         _extra.update {
             it.copy(
                 showAddRecipeDialog = false,
                 newRecipeName = "",
-                newRecipeDescription = ""
+                newRecipeDescription = "",
+                newRecipeCourseType = "",
             )
         }
     }
@@ -376,12 +430,16 @@ class CookingViewModel : ViewModel() {
         it.copy(
             showImportRecipeDialog = false,
             importRecipeName = "",
+            importRecipeCourseType = "",
             importRecipeIngredients = "",
             importRecipeInstructions = "",
         )
     }
 
     fun updateImportRecipeName(name: String) = _extra.update { it.copy(importRecipeName = name) }
+    fun updateImportRecipeCourseType(courseType: String) =
+        _extra.update { it.copy(importRecipeCourseType = courseType) }
+
     fun updateImportRecipeIngredients(text: String) =
         _extra.update { it.copy(importRecipeIngredients = text) }
 
@@ -391,7 +449,8 @@ class CookingViewModel : ViewModel() {
     fun importRecipe() {
         val extra = _extra.value
         val name = extra.importRecipeName.trim()
-        if (name.isBlank()) return
+        val courseType = extra.importRecipeCourseType.trim()
+        if (name.isBlank() || courseType.isBlank()) return
 
         val ingredients = parseIngredients(extra.importRecipeIngredients)
         val steps = parseInstructions(extra.importRecipeInstructions)
@@ -400,6 +459,7 @@ class CookingViewModel : ViewModel() {
             id = UUID.randomUUID().toString(),
             profileId = repository.getOrCreateProfileId(),
             name = name,
+            courseType = courseType,
             ingredientSections = if (ingredients.isNotEmpty())
                 listOf(IngredientSection(ingredients = ingredients)) else emptyList(),
             instructionSections = if (steps.isNotEmpty())
@@ -410,6 +470,7 @@ class CookingViewModel : ViewModel() {
             it.copy(
                 showImportRecipeDialog = false,
                 importRecipeName = "",
+                importRecipeCourseType = "",
                 importRecipeIngredients = "",
                 importRecipeInstructions = "",
                 editingRecipe = recipe,
@@ -421,7 +482,13 @@ class CookingViewModel : ViewModel() {
     // ── Recipe viewing ─────────────────────────────────────────────────────────
 
     fun openRecipeViewer(recipe: Recipe, menuPlanId: String? = null) {
-        _extra.update { it.copy(viewingRecipe = recipe, viewingMenuPlanId = menuPlanId) }
+        _extra.update {
+            it.copy(
+                viewingRecipe = recipe,
+                viewingMenuPlanId = menuPlanId,
+                recipeViewerBackStack = emptyList(),
+            )
+        }
         if (menuPlanId != null) {
             viewModelScope.launch {
                 repository.syncRecipes()
@@ -440,10 +507,83 @@ class CookingViewModel : ViewModel() {
 
     fun dismissRecipeViewer() {
         val fromMenuPlan = _extra.value.viewingMenuPlanId != null
-        _extra.update { it.copy(viewingRecipe = null, viewingMenuPlanId = null) }
+        _extra.update {
+            it.copy(
+                viewingRecipe = null,
+                viewingMenuPlanId = null,
+                recipeViewerBackStack = emptyList(),
+            )
+        }
         if (fromMenuPlan) {
             viewModelScope.launch { repository.syncMenuPlans() }
         }
+    }
+
+    fun openLinkedRecipe(recipeId: String) {
+        val cur = _extra.value.viewingRecipe ?: return
+        val planId = _extra.value.viewingMenuPlanId
+        val linked = repository.findRecipeById(recipeId) ?: return
+        if (recipeId == cur.id) return
+        _extra.update {
+            it.copy(
+                recipeViewerBackStack = it.recipeViewerBackStack + RecipeViewerFrame(cur.id, planId),
+                viewingRecipe = linked,
+                viewingMenuPlanId = planId,
+            )
+        }
+        if (planId != null) {
+            viewModelScope.launch {
+                repository.syncRecipes()
+                repository.syncMenuPlans()
+                repository.pruneInvalidRecipeProgress(planId, linked.id)
+                if (_extra.value.viewingRecipe?.id == linked.id &&
+                    _extra.value.viewingMenuPlanId == planId
+                ) {
+                    repository.findRecipeById(linked.id)?.let { latest ->
+                        _extra.update { it.copy(viewingRecipe = latest) }
+                    }
+                }
+            }
+        }
+    }
+
+    fun popRecipeViewer() {
+        var stack = _extra.value.recipeViewerBackStack
+        while (stack.isNotEmpty()) {
+            val frame = stack.last()
+            val prev = repository.findRecipeById(frame.recipeId)
+            stack = stack.dropLast(1)
+            if (prev != null) {
+                _extra.update {
+                    it.copy(
+                        recipeViewerBackStack = stack,
+                        viewingRecipe = prev,
+                        viewingMenuPlanId = frame.menuPlanId,
+                    )
+                }
+                val planId = frame.menuPlanId
+                if (planId != null) {
+                    viewModelScope.launch {
+                        repository.syncRecipes()
+                        repository.syncMenuPlans()
+                        if (_extra.value.viewingRecipe?.id == prev.id &&
+                            _extra.value.viewingMenuPlanId == planId
+                        ) {
+                            repository.findRecipeById(prev.id)?.let { latest ->
+                                _extra.update { it.copy(viewingRecipe = latest) }
+                            }
+                        }
+                    }
+                }
+                return
+            }
+        }
+        dismissRecipeViewer()
+    }
+
+    fun onRecipeViewerBack() {
+        if (_extra.value.recipeViewerBackStack.isNotEmpty()) popRecipeViewer()
+        else dismissRecipeViewer()
     }
 
     /** Timer notification: several recipes → show Madlavning menu-plan overview (not a single recipe). */
@@ -452,6 +592,7 @@ class CookingViewModel : ViewModel() {
             it.copy(
                 viewingRecipe = null,
                 viewingMenuPlanId = null,
+                recipeViewerBackStack = emptyList(),
                 editingRecipe = null,
                 hadRecipePhotoWhenEditorOpened = false,
             )
@@ -470,8 +611,9 @@ class CookingViewModel : ViewModel() {
         _extra.update {
             it.copy(
                 viewingRecipe = null,
+                recipeViewerBackStack = emptyList(),
                 editingRecipe = recipe,
-                hadRecipePhotoWhenEditorOpened = repository.hasLocalRecipePhoto(recipe.id),
+                hadRecipePhotoWhenEditorOpened = repository.hadRecipeImageWhenOpeningEditor(recipe),
             )
         }
     }
@@ -481,7 +623,7 @@ class CookingViewModel : ViewModel() {
     fun openRecipeEditor(recipe: Recipe) = _extra.update {
         it.copy(
             editingRecipe = recipe,
-            hadRecipePhotoWhenEditorOpened = repository.hasLocalRecipePhoto(recipe.id),
+            hadRecipePhotoWhenEditorOpened = repository.hadRecipeImageWhenOpeningEditor(recipe),
         )
     }
 
@@ -524,15 +666,24 @@ class CookingViewModel : ViewModel() {
                 s.copy(title = s.title.trim(), steps = s.steps.map { it.trim() })
             },
         )
-        val clearRecipeImageOnServer =
-            extraBefore.hadRecipePhotoWhenEditorOpened && !repository.hasLocalRecipePhoto(trimmed.id)
-        repository.updateRecipe(trimmed, clearRecipeImageOnServer = clearRecipeImageOnServer)
-        _extra.update {
-            it.copy(
-                editingRecipe = null,
-                viewingRecipe = trimmed,
-                hadRecipePhotoWhenEditorOpened = false,
-            )
+        if (trimmed.name.isBlank() || trimmed.courseType.isBlank()) return
+        val validIds = repository.recipes.value.map { it.id }.toSet()
+        val linked = trimmed.linkedRecipeIds
+            .filter { it != trimmed.id && it in validIds }
+            .distinct()
+        val toSave = trimmed.copy(linkedRecipeIds = linked)
+        val clearRecipeImageOnServer = extraBefore.hadRecipePhotoWhenEditorOpened &&
+            toSave.imageUrl.isNullOrBlank() &&
+            !repository.hasLocalRecipePhoto(toSave.id)
+        viewModelScope.launch {
+            val merged = repository.updateRecipe(toSave, clearRecipeImageOnServer = clearRecipeImageOnServer)
+            _extra.update {
+                it.copy(
+                    editingRecipe = null,
+                    viewingRecipe = merged,
+                    hadRecipePhotoWhenEditorOpened = false,
+                )
+            }
         }
     }
 
@@ -710,10 +861,14 @@ class CookingViewModel : ViewModel() {
             it.copy(
                 viewingRecipe = null,
                 viewingMenuPlanId = null,
+                recipeViewerBackStack = emptyList(),
                 expandedPlanId = planId,
                 searchQuery = "",
+                recipeCourseTypeFilter = null,
+                recipeSearchFieldFocused = false,
             )
         }
+        _clearRecipeSearchFocus.tryEmit(Unit)
         repository.saveLastExpandedMenuPlanId(planId)
     }
 

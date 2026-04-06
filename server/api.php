@@ -17,6 +17,9 @@
  * GET    /profile/{profileId}/recipes               List all recipes
  * PUT    /profile/{profileId}/recipes/{id}          Create or update a recipe
  * DELETE /profile/{profileId}/recipes/{id}          Delete a recipe
+ *
+ * Recipe images are stored as JPEG files under recipe_images/{recipeId}.jpg;
+ * the recipes row holds image_url (relative path). GET JSON includes absolute imageUrl.
  * GET    /profile/{profileId}/menu-plans            List all menu plans (with recipeIds)
  * PUT    /profile/{profileId}/menu-plans/{id}       Create or update a menu plan
  * DELETE /profile/{profileId}/menu-plans/{id}       Delete a menu plan
@@ -168,7 +171,7 @@ $db->exec('CREATE TABLE IF NOT EXISTS recipes (
     ingredient_sections  TEXT         NOT NULL,
     instruction_sections TEXT         NOT NULL,
     tips                 TEXT         NOT NULL,
-    image_jpeg           MEDIUMBLOB   NULL,
+    image_url            VARCHAR(768) NULL,
     created_at           BIGINT       NOT NULL,
     updated_at           BIGINT       NOT NULL,
     PRIMARY KEY (id),
@@ -192,6 +195,94 @@ foreach ([
 }
 
 try { $db->exec('ALTER TABLE recipes ADD COLUMN image_jpeg MEDIUMBLOB NULL'); } catch (PDOException $e) { /* already exists */ }
+try { $db->exec('ALTER TABLE recipes ADD COLUMN image_url VARCHAR(768) NULL'); } catch (PDOException $e) { /* already exists */ }
+
+// ── Recipe images (files on disk) ─────────────────────────────────────────
+define('RECIPE_IMAGES_SUBDIR', 'recipe_images');
+
+function recipe_images_fs_dir(): string
+{
+    return __DIR__ . '/' . RECIPE_IMAGES_SUBDIR;
+}
+
+function ensure_recipe_images_dir(): void
+{
+    $d = recipe_images_fs_dir();
+    if (!is_dir($d)) {
+        mkdir($d, 0755, true);
+    }
+}
+
+/** Web path prefix containing api.php (e.g. /shopping). */
+function public_api_dir_url_prefix(): string
+{
+    $dir = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/')), '/');
+    if ($dir === '' || $dir === '/') {
+        return '';
+    }
+    return $dir;
+}
+
+function absolute_recipe_image_url(?string $relativePath): ?string
+{
+    if ($relativePath === null || $relativePath === '') {
+        return null;
+    }
+    if (preg_match('#^https?://#i', $relativePath)) {
+        return $relativePath;
+    }
+    $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+    $proto = $https ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $base = public_api_dir_url_prefix();
+
+    return $proto . '://' . $host . $base . '/' . ltrim(str_replace('\\', '/', $relativePath), '/');
+}
+
+/** Delete stored file for a recipe if it exists; clear DB column optional (caller updates row). */
+function delete_recipe_image_file(PDO $db, string $recipeId, string $profileId): void
+{
+    $stmt = $db->prepare('SELECT image_url FROM recipes WHERE id = ? AND profile_id = ?');
+    $stmt->execute([$recipeId, $profileId]);
+    $row = $stmt->fetch();
+    if (!$row || empty($row['image_url'])) {
+        return;
+    }
+    $rel = $row['image_url'];
+    if (preg_match('#^https?://#i', $rel)) {
+        return;
+    }
+    $full = __DIR__ . '/' . ltrim(str_replace('\\', '/', $rel), '/');
+    if (is_file($full)) {
+        @unlink($full);
+    }
+}
+
+function migrate_legacy_recipe_blobs_to_files(PDO $db): void
+{
+    try {
+        $stmt = $db->query('SELECT id, image_jpeg FROM recipes WHERE image_jpeg IS NOT NULL AND LENGTH(image_jpeg) > 0');
+        $rows = $stmt ? $stmt->fetchAll() : [];
+    } catch (PDOException $e) {
+        return;
+    }
+    ensure_recipe_images_dir();
+    foreach ($rows as $r) {
+        $id = $r['id'];
+        $rel = RECIPE_IMAGES_SUBDIR . '/' . $id . '.jpg';
+        $full = __DIR__ . '/' . $rel;
+        if (@file_put_contents($full, $r['image_jpeg']) !== false) {
+            $db->prepare('UPDATE recipes SET image_url = ?, image_jpeg = NULL WHERE id = ?')->execute([$rel, $id]);
+        }
+    }
+    try {
+        $db->exec('ALTER TABLE recipes DROP COLUMN image_jpeg');
+    } catch (PDOException $e) { /* already dropped */ }
+}
+
+ensure_recipe_images_dir();
+migrate_legacy_recipe_blobs_to_files($db);
 
 $db->exec('CREATE TABLE IF NOT EXISTS menu_plans (
     id          VARCHAR(36)  NOT NULL,
@@ -301,9 +392,9 @@ function recipeToJson(array $row): array
         'tips'                => $row['tips'] ?? '',
         'createdAt'           => (int) $row['created_at'],
     ];
-    $jpg = $row['image_jpeg'] ?? null;
-    if ($jpg !== null && $jpg !== '') {
-        $out['imageBase64'] = base64_encode($jpg);
+    $abs = absolute_recipe_image_url($row['image_url'] ?? null);
+    if ($abs !== null && $abs !== '') {
+        $out['imageUrl'] = $abs;
     }
     return $out;
 }
@@ -704,17 +795,22 @@ if ($method === 'PUT' && count($segments) === 4 && $segments[0] === 'profile' &&
         $now,
     ]);
     if (array_key_exists('imageBase64', $body)) {
+        ensure_recipe_images_dir();
         $raw = $body['imageBase64'];
         if ($raw === null || $raw === '') {
-            $db->prepare('UPDATE recipes SET image_jpeg = NULL WHERE id = ? AND profile_id = ?')->execute([$id, $profileId]);
+            delete_recipe_image_file($db, $id, $profileId);
+            $db->prepare('UPDATE recipes SET image_url = NULL WHERE id = ? AND profile_id = ?')->execute([$id, $profileId]);
         } else {
             $bin = base64_decode((string) $raw, true);
             if ($bin === false) {
                 json_out(['error' => 'invalid imageBase64'], 400);
             }
-            // Plain execute is more reliable than PDO::PARAM_LOB for MySQL BLOBs on many hosts.
-            $db->prepare('UPDATE recipes SET image_jpeg = ? WHERE id = ? AND profile_id = ?')
-               ->execute([$bin, $id, $profileId]);
+            $rel = RECIPE_IMAGES_SUBDIR . '/' . $id . '.jpg';
+            $full = __DIR__ . '/' . $rel;
+            if (file_put_contents($full, $bin) === false) {
+                json_out(['error' => 'failed to store recipe image'], 500);
+            }
+            $db->prepare('UPDATE recipes SET image_url = ? WHERE id = ? AND profile_id = ?')->execute([$rel, $id, $profileId]);
         }
     }
     $stmt = $db->prepare('SELECT * FROM recipes WHERE id = ?');
@@ -725,6 +821,7 @@ if ($method === 'PUT' && count($segments) === 4 && $segments[0] === 'profile' &&
 // ── DELETE /profile/{profileId}/recipes/{id} ──────────────────────────────
 if ($method === 'DELETE' && count($segments) === 4 && $segments[0] === 'profile' && $segments[2] === 'recipes') {
     [, $profileId, , $id] = $segments;
+    delete_recipe_image_file($db, $id, $profileId);
     $db->prepare('DELETE FROM recipes WHERE id = ? AND profile_id = ?')->execute([$id, $profileId]);
     http_response_code(204);
     exit;
