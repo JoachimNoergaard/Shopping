@@ -1,4 +1,4 @@
-# SharkShopper 🦈
+# ShoppingShark 🦈
 
 A collaborative grocery shopping app for Android, built with Jetpack Compose and Material Design 3.
 
