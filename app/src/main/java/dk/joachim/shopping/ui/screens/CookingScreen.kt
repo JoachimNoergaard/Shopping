@@ -177,8 +177,25 @@ fun CookingScreen(
             showStepProgress = uiState.viewingMenuPlanId != null,
             onToggleStep = viewModel::toggleStepCompletion,
             planServings = uiState.viewingMenuPlanId?.let { pid ->
-                uiState.menuPlans.firstOrNull { it.id == pid }?.servings
+                val plan = uiState.menuPlans.firstOrNull { it.id == pid }
+                val recipeId = uiState.viewingRecipe?.id
+                if (plan != null && recipeId != null) {
+                    plan.recipeServings[recipeId] ?: plan.servings
+                } else {
+                    plan?.servings
+                }
             } ?: 0,
+            recipeServingsIsOverridden = uiState.viewingMenuPlanId?.let { pid ->
+                val plan = uiState.menuPlans.firstOrNull { it.id == pid }
+                val recipeId = uiState.viewingRecipe?.id
+                recipeId != null && plan?.recipeServings?.containsKey(recipeId) == true
+            } ?: false,
+            onUpdatePlanServings = uiState.viewingMenuPlanId?.let { pid ->
+                val recipeId = uiState.viewingRecipe?.id
+                if (recipeId != null) {
+                    { servings: Int? -> viewModel.updateMenuPlanRecipeServings(pid, recipeId, servings) }
+                } else null
+            },
             showAddToPlan = uiState.viewingMenuPlanId == null,
             menuPlans = if (uiState.viewingMenuPlanId == null)
                 uiState.menuPlans.filter { uiState.viewingRecipe!!.id !in it.recipeIds }
@@ -1019,6 +1036,8 @@ private fun RecipeDetailScreen(
     showStepProgress: Boolean = false,
     onToggleStep: (sectionIndex: Int, stepIndex: Int) -> Unit = { _, _ -> },
     planServings: Int = 0,
+    recipeServingsIsOverridden: Boolean = false,
+    onUpdatePlanServings: ((Int?) -> Unit)? = null,
     showAddToPlan: Boolean = false,
     menuPlans: List<MenuPlan> = emptyList(),
     onAddToPlan: (planId: String) -> Unit = {},
@@ -1147,16 +1166,66 @@ private fun RecipeDetailScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Text(
-                                        text = if (effectiveServings > 0) {
-                                            "$effectiveServings personer"
-                                        } else {
-                                            ""
-                                        },
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                    )
+                                    if (effectiveServings > 0 && onUpdatePlanServings != null) {
+                                        Column {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                IconButton(
+                                                    onClick = { if (effectiveServings > 1) onUpdatePlanServings(effectiveServings - 1) },
+                                                    enabled = effectiveServings > 1,
+                                                    modifier = Modifier.size(32.dp),
+                                                ) {
+                                                    Text(
+                                                        "−",
+                                                        style = MaterialTheme.typography.titleSmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                    )
+                                                }
+                                                Text(
+                                                    text = "$effectiveServings personer",
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = if (recipeServingsIsOverridden)
+                                                        MaterialTheme.colorScheme.primary
+                                                    else
+                                                        MaterialTheme.colorScheme.onSurface,
+                                                )
+                                                IconButton(
+                                                    onClick = { onUpdatePlanServings(effectiveServings + 1) },
+                                                    modifier = Modifier.size(32.dp),
+                                                ) {
+                                                    Text(
+                                                        "+",
+                                                        style = MaterialTheme.typography.titleSmall,
+                                                        fontWeight = FontWeight.Bold,
+                                                    )
+                                                }
+                                            }
+                                            val showOriginal = recipe.servings > 0 && recipe.servings != effectiveServings
+                                            if (showOriginal) {
+                                                Text(
+                                                    text = "Oprindeligt: ${recipe.servings} pers.",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        Column {
+                                            Text(
+                                                text = if (effectiveServings > 0) "$effectiveServings personer" else "",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                            )
+                                            if (recipe.servings > 0 && planServings > 0 && recipe.servings != effectiveServings) {
+                                                Text(
+                                                    text = "Oprindeligt: ${recipe.servings} pers.",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                )
+                                            }
+                                        }
+                                    }
                                     Text(
                                         text = recipe.courseType,
                                         style = MaterialTheme.typography.bodyMedium,
@@ -2331,7 +2400,7 @@ private fun MenuPlanCard(
     canAddToGroceryList: Boolean,
     onAddIngredientToGroceryList: (String, String, String) -> Unit,
 ) {
-    val mergedIngredientLines = remember(plan.id, plan.servings, plan.recipeIds, recipes) {
+    val mergedIngredientLines = remember(plan.id, plan.servings, plan.recipeIds, plan.recipeServings, recipes) {
         buildMergedMenuPlanIngredients(plan, recipes)
     }
     var showIngredientsDialog by remember { mutableStateOf(false) }
@@ -2444,6 +2513,8 @@ private fun MenuPlanCard(
                                 recipe = recipe,
                                 completedSteps = doneSteps,
                                 totalSteps = totalSteps,
+                                planServings = plan.servings,
+                                recipeServingsOverride = plan.recipeServings[recipe.id],
                                 onEdit = { onEditRecipe(recipe) },
                                 onRemove = { onRemoveRecipe(recipe.id) },
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -2552,6 +2623,8 @@ private fun RecipeRow(
     recipe: Recipe,
     completedSteps: Int = 0,
     totalSteps: Int = 0,
+    planServings: Int = 0,
+    recipeServingsOverride: Int? = null,
     onEdit: () -> Unit,
     onRemove: () -> Unit,
     modifier: Modifier = Modifier,
@@ -2587,6 +2660,20 @@ private fun RecipeRow(
                             else MaterialTheme.colorScheme.onSurfaceVariant,
                             fontWeight = if (isAllDone) FontWeight.Bold else FontWeight.Normal,
                         )
+                    }
+                    if (recipeServingsOverride != null && recipeServingsOverride != planServings) {
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                        ) {
+                            Text(
+                                text = "$recipeServingsOverride pers.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                            )
+                        }
                     }
                 }
                 if (totalSteps > 0) {
@@ -2678,7 +2765,8 @@ private fun buildMergedMenuPlanIngredients(
     recipes: List<Recipe>
 ): List<MergedIngredientRow> {
     val scaleFactorFor: (Recipe) -> Double = { recipe ->
-        if (plan.servings > 0 && recipe.servings > 0) plan.servings.toDouble() / recipe.servings
+        val effectiveServings = plan.recipeServings[recipe.id] ?: plan.servings
+        if (effectiveServings > 0 && recipe.servings > 0) effectiveServings.toDouble() / recipe.servings
         else 1.0
     }
     val scaled = buildList {

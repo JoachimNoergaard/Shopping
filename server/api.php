@@ -298,6 +298,7 @@ $db->exec('CREATE TABLE IF NOT EXISTS menu_plans (
 
 try { $db->exec('ALTER TABLE menu_plans ADD COLUMN recipe_progress TEXT NOT NULL DEFAULT \'{}\''); } catch (PDOException $e) { /* already exists */ }
 try { $db->exec('ALTER TABLE menu_plans ADD COLUMN servings INT NOT NULL DEFAULT 0'); } catch (PDOException $e) { /* already exists */ }
+try { $db->exec('ALTER TABLE menu_plans ADD COLUMN recipe_servings TEXT NOT NULL DEFAULT \'{}\''); } catch (PDOException $e) { /* already exists */ }
 
 $db->exec('CREATE TABLE IF NOT EXISTS menu_plan_recipes (
     menu_plan_id VARCHAR(36) NOT NULL,
@@ -361,6 +362,7 @@ function menuPlanToJson(PDO $db, array $row): array
     $stmt = $db->prepare('SELECT recipe_id FROM menu_plan_recipes WHERE menu_plan_id = ? ORDER BY sort_order ASC');
     $stmt->execute([$row['id']]);
     $progress = json_decode($row['recipe_progress'] ?? '{}', true) ?: [];
+    $recipeServings = json_decode($row['recipe_servings'] ?? '{}', true) ?: [];
     return [
         'id'             => $row['id'],
         'profileId'      => $row['profile_id'],
@@ -369,6 +371,7 @@ function menuPlanToJson(PDO $db, array $row): array
         'servings'       => (int) ($row['servings'] ?? 0),
         'recipeIds'      => $stmt->fetchAll(PDO::FETCH_COLUMN),
         'recipeProgress' => (object) $progress,
+        'recipeServings' => (object) $recipeServings,
         'createdAt'      => (int) $row['created_at'],
     ];
 }
@@ -839,15 +842,17 @@ if ($method === 'PUT' && count($segments) === 4 && $segments[0] === 'profile' &&
     [, $profileId, , $id] = $segments;
     $now = nowMs();
     $recipeProgress = json_encode($body['recipeProgress'] ?? new \stdClass());
+    $recipeServings = json_encode($body['recipeServings'] ?? new \stdClass());
     $db->prepare('
-        INSERT INTO menu_plans (id, profile_id, name, description, servings, recipe_progress, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)
+        INSERT INTO menu_plans (id, profile_id, name, description, servings, recipe_progress, recipe_servings, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)
         ON DUPLICATE KEY UPDATE
             name             = VALUES(name),
             description      = VALUES(description),
             servings         = VALUES(servings),
             recipe_progress  = VALUES(recipe_progress),
+            recipe_servings  = VALUES(recipe_servings),
             updated_at       = VALUES(updated_at)
-    ')->execute([$id, $profileId, $body['name'] ?? '', $body['description'] ?? '', (int) ($body['servings'] ?? 0), $recipeProgress, $body['createdAt'] ?? $now, $now]);
+    ')->execute([$id, $profileId, $body['name'] ?? '', $body['description'] ?? '', (int) ($body['servings'] ?? 0), $recipeProgress, $recipeServings, $body['createdAt'] ?? $now, $now]);
 
     $db->prepare('DELETE FROM menu_plan_recipes WHERE menu_plan_id = ?')->execute([$id]);
     $recipeIds = $body['recipeIds'] ?? [];

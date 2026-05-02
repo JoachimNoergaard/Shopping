@@ -186,6 +186,23 @@ object ShoppingRepository {
         }
     }
 
+    fun updateMenuPlanRecipeServings(planId: String, recipeId: String, servings: Int?) {
+        val updated = _menuPlans.value.map { plan ->
+            if (plan.id != planId) return@map plan
+            val newRecipeServings = if (servings == null) {
+                plan.recipeServings - recipeId
+            } else {
+                plan.recipeServings + (recipeId to servings)
+            }
+            plan.copy(recipeServings = newRecipeServings)
+        }
+        _menuPlans.value = updated
+        saveMenuPlans(updated)
+        scope.launch {
+            updated.firstOrNull { it.id == planId }?.let { RemoteDataSource.upsertMenuPlan(it) }
+        }
+    }
+
     fun deleteMenuPlan(id: String) {
         val plan = _menuPlans.value.firstOrNull { it.id == id } ?: return
         val updated = _menuPlans.value.filter { it.id != id }

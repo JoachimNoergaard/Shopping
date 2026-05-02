@@ -41,6 +41,7 @@ data class ApiMenuPlan(
     val servings: Int = 0,
     val recipeIds: List<String> = emptyList(),
     val recipeProgress: Map<String, List<CompletedStep>> = emptyMap(),
+    val recipeServings: Map<String, Int> = emptyMap(),
     val createdAt: Long,
 ) {
     fun toMenuPlan() = MenuPlan(
@@ -51,6 +52,7 @@ data class ApiMenuPlan(
         servings = servings,
         recipeIds = recipeIds,
         recipeProgress = recipeProgress,
+        recipeServings = recipeServings,
         createdAt = createdAt,
     )
 }
@@ -64,6 +66,7 @@ data class UpsertMenuPlanRequest(
     val servings: Int = 0,
     val recipeIds: List<String>,
     val recipeProgress: Map<String, List<CompletedStep>> = emptyMap(),
+    val recipeServings: Map<String, Int> = emptyMap(),
     val createdAt: Long,
 )
 

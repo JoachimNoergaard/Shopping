@@ -346,6 +346,9 @@ class CookingViewModel : ViewModel() {
     fun updateEditPlanServings(servings: Int) =
         _extra.update { it.copy(editPlanServings = servings) }
 
+    fun updateMenuPlanRecipeServings(planId: String, recipeId: String, servings: Int?) =
+        repository.updateMenuPlanRecipeServings(planId, recipeId, servings)
+
     fun saveEditPlan() {
         val plan = _extra.value.editingPlan ?: return
         val name = _extra.value.editPlanName.trim()

@@ -123,6 +123,7 @@ object RemoteDataSource {
                     servings = plan.servings,
                     recipeIds = plan.recipeIds,
                     recipeProgress = plan.recipeProgress,
+                    recipeServings = plan.recipeServings,
                     createdAt = plan.createdAt,
                 )
             )
