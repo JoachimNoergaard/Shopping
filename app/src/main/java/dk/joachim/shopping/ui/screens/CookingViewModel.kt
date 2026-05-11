@@ -455,18 +455,16 @@ class CookingViewModel : ViewModel() {
         val courseType = extra.importRecipeCourseType.trim()
         if (name.isBlank() || courseType.isBlank()) return
 
-        val ingredients = parseIngredients(extra.importRecipeIngredients)
-        val steps = parseInstructions(extra.importRecipeInstructions)
+        val ingredientSections = parseIngredients(extra.importRecipeIngredients)
+        val instructionSections = parseInstructions(extra.importRecipeInstructions)
 
         val recipe = Recipe(
             id = UUID.randomUUID().toString(),
             profileId = repository.getOrCreateProfileId(),
             name = name,
             courseType = courseType,
-            ingredientSections = if (ingredients.isNotEmpty())
-                listOf(IngredientSection(ingredients = ingredients)) else emptyList(),
-            instructionSections = if (steps.isNotEmpty())
-                listOf(InstructionSection(steps = steps)) else emptyList(),
+            ingredientSections = ingredientSections,
+            instructionSections = instructionSections,
         )
         repository.addRecipe(recipe)
         _extra.update {
@@ -944,10 +942,46 @@ private fun parseIngredientLine(line: String): Ingredient? {
     return Ingredient(name = name.capitalizeIngredientFirstLetter(), quantity = quantity, unit = unit)
 }
 
-private fun parseIngredients(text: String): List<Ingredient> =
-    text.lines().mapNotNull { parseIngredientLine(it) }
+private fun parseIngredients(text: String): List<IngredientSection> {
+    val sections = mutableListOf<IngredientSection>()
+    var currentTitle = ""
+    var currentIngredients = mutableListOf<Ingredient>()
+    for (line in text.lines()) {
+        val trimmed = line.trim()
+        if (trimmed.startsWith("#")) {
+            if (currentIngredients.isNotEmpty()) {
+                sections.add(IngredientSection(title = currentTitle, ingredients = currentIngredients.toList()))
+            }
+            currentTitle = trimmed.removePrefix("#").trim()
+            currentIngredients = mutableListOf()
+        } else {
+            parseIngredientLine(trimmed)?.let { currentIngredients.add(it) }
+        }
+    }
+    if (currentIngredients.isNotEmpty()) {
+        sections.add(IngredientSection(title = currentTitle, ingredients = currentIngredients.toList()))
+    }
+    return sections
+}
 
-private fun parseInstructions(text: String): List<String> =
-    text.split(Regex("(?<=[.!?])\\s+|\\n+"))
-        .map { it.trim() }
-        .filter { it.isNotBlank() }
+private fun parseInstructions(text: String): List<InstructionSection> {
+    val sections = mutableListOf<InstructionSection>()
+    var currentTitle = ""
+    var currentSteps = mutableListOf<String>()
+    for (line in text.lines()) {
+        val trimmed = line.trim()
+        if (trimmed.startsWith("#")) {
+            if (currentSteps.isNotEmpty()) {
+                sections.add(InstructionSection(title = currentTitle, steps = currentSteps.toList()))
+            }
+            currentTitle = trimmed.removePrefix("#").trim()
+            currentSteps = mutableListOf()
+        } else if (trimmed.isNotBlank()) {
+            currentSteps.add(trimmed)
+        }
+    }
+    if (currentSteps.isNotEmpty()) {
+        sections.add(InstructionSection(title = currentTitle, steps = currentSteps.toList()))
+    }
+    return sections
+}

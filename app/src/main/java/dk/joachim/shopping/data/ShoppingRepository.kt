@@ -2,6 +2,8 @@ package dk.joachim.shopping.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import coil.imageLoader
+import coil.memory.MemoryCache
 import dk.joachim.shopping.data.network.PatchListRequest
 import dk.joachim.shopping.data.network.RemoteDataSource
 
@@ -287,7 +289,13 @@ object ShoppingRepository {
         if (payload != null) {
             when {
                 payload.isEmpty() -> { /* cleared on server */ }
-                else -> RecipePhotoStorage.deletePhoto(appContext, recipe.id)
+                else -> {
+                    RecipePhotoStorage.deletePhoto(appContext, recipe.id)
+                    // The server overwrites the same URL — evict Coil caches so the next
+                    // load fetches the new image instead of serving the stale cached copy.
+                    evictImageFromCoilCache(recipe.imageUrl)
+                    evictImageFromCoilCache(merged.imageUrl)
+                }
             }
         }
         _recipes.update { list -> list.map { if (it.id == merged.id) merged else it } }
@@ -298,6 +306,13 @@ object ShoppingRepository {
         if (clearOnServer) return ""
         if (!RecipePhotoStorage.hasPhoto(appContext, recipeId)) return null
         return RecipePhotoStorage.readBase64(appContext, recipeId)
+    }
+
+    private fun evictImageFromCoilCache(url: String?) {
+        if (url.isNullOrBlank()) return
+        val loader = appContext.imageLoader
+        loader.memoryCache?.remove(MemoryCache.Key(url))
+        loader.diskCache?.remove(url)
     }
 
     fun findRecipeById(id: String): Recipe? =

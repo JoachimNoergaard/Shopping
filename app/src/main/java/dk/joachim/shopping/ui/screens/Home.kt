@@ -259,7 +259,14 @@ fun GroceryListsScreen(
         }
     ) { paddingValues ->
         if (selectedTab == 1) {
-            CookingScreen(viewModel = cookingViewModel, paddingValues = paddingValues)
+            CookingScreen(
+                viewModel = cookingViewModel,
+                paddingValues = paddingValues,
+                onResetAppBarScroll = {
+                    scrollBehavior.state.heightOffset = 0f
+                    scrollBehavior.state.contentOffset = 0f
+                },
+            )
         } else if (uiState.isLoading) {
             Box(
                 modifier = Modifier

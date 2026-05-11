@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -82,6 +83,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -128,6 +130,7 @@ import dk.joachim.shopping.data.RecipeStepTimer
 import dk.joachim.shopping.data.RecipeStepTimerEntry
 import dk.joachim.shopping.data.capitalizeIngredientFirstLetter
 import dk.joachim.shopping.data.parseInstructionMinutes
+import kotlinx.coroutines.launch
 import java.io.File
 
 @Suppress("LongMethod", "FunctionNaming")
@@ -135,6 +138,7 @@ import java.io.File
 fun CookingScreen(
     viewModel: CookingViewModel = viewModel(),
     paddingValues: PaddingValues,
+    onResetAppBarScroll: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val recipeCourseTypeSuggestions = remember(uiState.recipes) {
@@ -258,6 +262,8 @@ fun CookingScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             val focusManager = LocalFocusManager.current
+            val listState = rememberLazyListState()
+            val coroutineScope = rememberCoroutineScope()
             LaunchedEffect(Unit) {
                 viewModel.clearRecipeSearchFocus.collect {
                     focusManager.clearFocus()
@@ -268,6 +274,17 @@ fun CookingScreen(
                 onValueChange = viewModel::updateSearchQuery,
                 label = { Text("Søg i opskrifter") },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                trailingIcon = if (uiState.searchQuery.isNotBlank()) {
+                    {
+                        IconButton(onClick = {
+                            viewModel.updateSearchQuery("")
+                            onResetAppBarScroll()
+                            coroutineScope.launch { listState.animateScrollToItem(0) }
+                        }) {
+                            Icon(Icons.Default.Close, contentDescription = "Ryd søgning")
+                        }
+                    }
+                } else null,
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
@@ -322,6 +339,7 @@ fun CookingScreen(
                 }
             } else {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(bottom = 88.dp),
                 ) {
@@ -1760,7 +1778,7 @@ private fun DraggableIngredientSections(
                                                             localFlat = items
                                                             dragOffsetY -= (itemY[nextIdx]
                                                                 ?: 0f) - (itemY[di] ?: 0f)
-                                                            val tmpY = itemY[di];
+                                                            val tmpY = itemY[di]
                                                             val tmpH = itemH[di]
                                                             itemY[di] =
                                                                 itemY[nextIdx] ?: 0f; itemH[di] =
@@ -1786,7 +1804,7 @@ private fun DraggableIngredientSections(
                                                             localFlat = items
                                                             dragOffsetY += (itemY[di]
                                                                 ?: 0f) - (itemY[prevIdx] ?: 0f)
-                                                            val tmpY = itemY[di];
+                                                            val tmpY = itemY[di]
                                                             val tmpH = itemH[di]
                                                             itemY[di] =
                                                                 itemY[prevIdx] ?: 0f; itemH[di] =
@@ -2092,7 +2110,7 @@ private fun DraggableInstructionSections(
                                                             localFlat = items
                                                             dragOffsetY -= (itemY[nextIdx]
                                                                 ?: 0f) - (itemY[di] ?: 0f)
-                                                            val tmpY = itemY[di];
+                                                            val tmpY = itemY[di]
                                                             val tmpH = itemH[di]
                                                             itemY[di] =
                                                                 itemY[nextIdx] ?: 0f; itemH[di] =
@@ -2118,7 +2136,7 @@ private fun DraggableInstructionSections(
                                                             localFlat = items
                                                             dragOffsetY += (itemY[di]
                                                                 ?: 0f) - (itemY[prevIdx] ?: 0f)
-                                                            val tmpY = itemY[di];
+                                                            val tmpY = itemY[di]
                                                             val tmpH = itemH[di]
                                                             itemY[di] =
                                                                 itemY[prevIdx] ?: 0f; itemH[di] =
@@ -3347,6 +3365,11 @@ private fun ImportRecipeDialog(
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                     minLines = 4,
                     modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    text = "Tip: Linier startende med # opretter ny sektion",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         },
