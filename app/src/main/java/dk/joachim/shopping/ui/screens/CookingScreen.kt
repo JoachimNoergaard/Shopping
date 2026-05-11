@@ -3367,7 +3367,7 @@ private fun ImportRecipeDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Text(
-                    text = "Tip: Linier startende med # opretter ny sektion",
+                    text = "Tip: Linjer, der starter med # opretter ny sektion",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
