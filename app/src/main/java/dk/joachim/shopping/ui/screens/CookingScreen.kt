@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Edit
@@ -117,6 +118,7 @@ import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -268,11 +270,7 @@ fun CookingScreen(
         val showRecipeSearchList =
             uiState.recipeSearchFieldFocused || uiState.searchQuery.isNotBlank()
         val courseTypeOptions = remember(uiState.recipes) {
-            uiState.recipes
-                .map { it.courseType.trim() }
-                .filter { it.isNotBlank() }
-                .distinctBy { it.lowercase() }
-                .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it })
+            distinctRecipeCourseTypes(uiState.recipes)
         }
         val recipesForSearchList = remember(
             uiState.recipes,
@@ -582,13 +580,28 @@ fun CookingScreen(
     }
 }
 
-private fun distinctRecipeCourseTypes(recipes: List<Recipe>): List<String> =
-    recipes.asSequence()
+private val PreferredCourseTypeOrder = listOf(
+    "Forret",
+    "Hovedret",
+    "Tilbehør",
+    "Dessert",
+    "Kage",
+)
+
+private fun distinctRecipeCourseTypes(recipes: List<Recipe>): List<String> {
+    val preferredIndex = PreferredCourseTypeOrder
+        .withIndex()
+        .associate { (idx, name) -> name.lowercase() to idx }
+    return recipes.asSequence()
         .map { it.courseType.trim() }
         .filter { it.isNotBlank() }
         .distinctBy { it.lowercase() }
-        .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it })
+        .sortedWith(
+            compareBy<String> { preferredIndex[it.lowercase()] ?: Int.MAX_VALUE }
+                .thenBy(String.CASE_INSENSITIVE_ORDER) { it }
+        )
         .toList()
+}
 
 @Suppress("FunctionNaming")
 @Composable
@@ -1079,6 +1092,7 @@ private fun RecipeDetailScreen(
     }
 
     var showPlanPicker by remember { mutableStateOf(false) }
+    var showOverflowMenu by remember { mutableStateOf(false) }
 
     if (showPlanPicker) {
         AddToPlanDialog(
@@ -1128,8 +1142,35 @@ private fun RecipeDetailScreen(
                             tint = if (keepScreenOnActive) MaterialTheme.colorScheme.primary else LocalContentColor.current,
                         )
                     }
-                    IconButton(onClick = onEdit) {
-                        Icon(Icons.Default.Edit, contentDescription = "Rediger")
+                    Box {
+                        IconButton(onClick = { showOverflowMenu = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Flere handlinger")
+                        }
+                        DropdownMenu(
+                            expanded = showOverflowMenu,
+                            onDismissRequest = { showOverflowMenu = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Del opskrift") },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Share, contentDescription = null)
+                                },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    shareRecipe(context, recipe)
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Rediger") },
+                                leadingIcon = {
+                                    Icon(Icons.Default.Edit, contentDescription = null)
+                                },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    onEdit()
+                                },
+                            )
+                        }
                     }
                 }
             )
@@ -1176,154 +1217,149 @@ private fun RecipeDetailScreen(
                             )
                         }
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(48.dp))
                 }
 
                 val scaleFactor = if (planServings > 0 && recipe.servings > 0)
                     planServings.toDouble() / recipe.servings else 1.0
                 val effectiveServings = if (planServings > 0) planServings else recipe.servings
 
-                val summaryTopRow = effectiveServings > 0 || recipe.courseType.isNotBlank()
-                val summaryTimeRow =
-                    recipe.prepTimeMinutes > 0 || recipe.totalTimeMinutes > 0
+                val summaryTopRow = effectiveServings > 0
+                val showCourseType = recipe.courseType.isNotBlank()
+                val showPrepTime = recipe.prepTimeMinutes > 0
+                val showTotalTime = recipe.totalTimeMinutes > 0
+                val showTimeInfo = showPrepTime || showTotalTime
+                val summaryMetaRow = showCourseType || showTimeInfo
                 val secondaryMetaItems = buildList {
                     if (recipe.durability.isNotBlank()) add("Holdbarhed" to recipe.durability)
                 }
-                if (summaryTopRow || summaryTimeRow || secondaryMetaItems.isNotEmpty()) {
-                    val isDarkRecipeTheme =
-                        MaterialTheme.colorScheme.surface.luminance() < 0.5f
-                    val summaryContainerColor =
-                        if (isDarkRecipeTheme) Color.Transparent else Color.White
-                    Card(
+                if (summaryTopRow || summaryMetaRow || secondaryMetaItems.isNotEmpty()) {
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = summaryContainerColor),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            if (summaryTopRow) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    if (effectiveServings > 0 && onUpdatePlanServings != null) {
-                                        Column {
-                                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                                IconButton(
-                                                    onClick = { if (effectiveServings > 1) onUpdatePlanServings(effectiveServings - 1) },
-                                                    enabled = effectiveServings > 1,
-                                                    modifier = Modifier.size(32.dp),
-                                                ) {
-                                                    Text(
-                                                        "−",
-                                                        style = MaterialTheme.typography.titleSmall,
-                                                        fontWeight = FontWeight.Bold,
-                                                    )
-                                                }
-                                                Text(
-                                                    text = "$effectiveServings personer",
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = if (recipeServingsIsOverridden)
-                                                        MaterialTheme.colorScheme.primary
-                                                    else
-                                                        MaterialTheme.colorScheme.onSurface,
-                                                )
-                                                IconButton(
-                                                    onClick = { onUpdatePlanServings(effectiveServings + 1) },
-                                                    modifier = Modifier.size(32.dp),
-                                                ) {
-                                                    Text(
-                                                        "+",
-                                                        style = MaterialTheme.typography.titleSmall,
-                                                        fontWeight = FontWeight.Bold,
-                                                    )
-                                                }
-                                            }
-                                            val showOriginal = recipe.servings > 0 && recipe.servings != effectiveServings
-                                            if (showOriginal) {
-                                                Text(
-                                                    text = "Oprindeligt: ${recipe.servings} pers.",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                )
-                                            }
-                                        }
-                                    } else {
-                                        Column {
-                                            Text(
-                                                text = if (effectiveServings > 0) "$effectiveServings personer" else "",
-                                                style = MaterialTheme.typography.bodyMedium,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                            )
-                                            if (recipe.servings > 0 && planServings > 0 && recipe.servings != effectiveServings) {
-                                                Text(
-                                                    text = "Oprindeligt: ${recipe.servings} pers.",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                )
-                                            }
-                                        }
-                                    }
+                        if (summaryMetaRow) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (showCourseType) {
                                     Text(
+                                        modifier = Modifier.padding(end = 4.dp),
                                         text = recipe.courseType,
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.Medium,
                                         color = MaterialTheme.colorScheme.onSurface,
                                     )
                                 }
-                            }
-                            if (summaryTimeRow) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
+                                if (showCourseType && showTimeInfo) {
                                     Text(
-                                        text = if (recipe.prepTimeMinutes > 0) {
-                                            "Tilberedningstid: ${recipe.prepTimeMinutes} min"
-                                        } else {
-                                            ""
-                                        },
+                                        text = " | ",
                                         style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                    )
-                                    Text(
-                                        text = if (recipe.totalTimeMinutes > 0) {
-                                            "Samlet tid: ${recipe.totalTimeMinutes} min"
-                                        } else {
-                                            ""
-                                        },
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Medium,
-                                        color = MaterialTheme.colorScheme.onSurface,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
-                            }
-                            secondaryMetaItems.forEach { (label, value) ->
-                                Row {
-                                    Text(
-                                        text = label,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.width(130.dp)
+                                if (showTimeInfo) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Timer,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.size(18.dp),
                                     )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    val timeText = when {
+                                        showPrepTime && showTotalTime ->
+                                            "${recipe.prepTimeMinutes} min / ${recipe.totalTimeMinutes} min"
+                                        showPrepTime -> "${recipe.prepTimeMinutes} min"
+                                        else -> "${recipe.totalTimeMinutes} min"
+                                    }
                                     Text(
-                                        text = value,
-                                        style = MaterialTheme.typography.bodySmall,
+                                        text = timeText,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
                                         color = MaterialTheme.colorScheme.onSurface,
                                     )
                                 }
                             }
                         }
+                        if (summaryTopRow) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (effectiveServings > 0 && onUpdatePlanServings != null) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            ServingsStepperButton(
+                                                symbol = "−",
+                                                enabled = effectiveServings > 1,
+                                                onClick = { onUpdatePlanServings(effectiveServings - 1) },
+                                            )
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            Text(
+                                                text = "$effectiveServings personer",
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (recipeServingsIsOverridden)
+                                                    MaterialTheme.colorScheme.primary
+                                                else
+                                                    MaterialTheme.colorScheme.onSurface,
+                                            )
+                                            Spacer(modifier = Modifier.width(12.dp))
+                                            ServingsStepperButton(
+                                                symbol = "+",
+                                                enabled = true,
+                                                onClick = { onUpdatePlanServings(effectiveServings + 1) },
+                                            )
+                                        }
+                                        val showOriginal = recipe.servings > 0 && recipe.servings != effectiveServings
+                                        if (showOriginal) {
+                                            Text(
+                                                text = "Oprindeligt: ${recipe.servings} pers.",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
+                                } else {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text(
+                                            text = if (effectiveServings > 0) "$effectiveServings personer" else "",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                        )
+                                        if (recipe.servings > 0 && planServings > 0 && recipe.servings != effectiveServings) {
+                                            Text(
+                                                text = "Oprindeligt: ${recipe.servings} pers.",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        secondaryMetaItems.forEach { (label, value) ->
+                            Row {
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.width(130.dp)
+                                )
+                                Text(
+                                    text = value,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                        }
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
                 }
 
                 if (recipe.description.isNotBlank()) {
@@ -1331,166 +1367,197 @@ private fun RecipeDetailScreen(
                         text = recipe.description,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
                     )
-                    Spacer(modifier = Modifier.height(16.dp))
-                }
-
-                if (recipe.nutritionFacts.isNotBlank()) {
-                    SectionLabel("Næringsfakta")
-                    Text(
-                        text = recipe.nutritionFacts,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
                 }
 
                 if (recipe.ingredientSections.any { it.ingredients.isNotEmpty() }) {
                     SectionLabel("Ingredienser")
                     Spacer(modifier = Modifier.height(4.dp))
-                    recipe.ingredientSections.forEach { section ->
-                        if (section.ingredients.isEmpty()) return@forEach
-                        if (section.title.isNotBlank() && recipe.ingredientSections.size > 1) {
-                            Text(
-                                text = section.title,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
-                            )
-                        }
-                        section.ingredients.forEach { ingredient ->
-                            Row(modifier = Modifier.padding(vertical = 2.dp)) {
-                                val scaledQty = scaleQuantity(ingredient.quantity, scaleFactor)
-                                val qty = listOf(scaledQty, ingredient.unit)
-                                    .filter { it.isNotBlank() }
-                                    .joinToString(" ")
-                                if (qty.isNotBlank()) {
+                    val isDarkRecipeTheme =
+                        MaterialTheme.colorScheme.surface.luminance() < 0.5f
+                    val sectionContainerColor =
+                        if (isDarkRecipeTheme) Color.Transparent else Color.White
+                    val nonEmptySections =
+                        recipe.ingredientSections.filter { it.ingredients.isNotEmpty() }
+                    nonEmptySections.forEachIndexed { index, section ->
+                        val isFirst = index == 0
+                        val isLast = index == nonEmptySections.lastIndex
+                        val cardShape = stackedCardShape(isFirst, isLast)
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp),
+                            shape = cardShape,
+                            colors = CardDefaults.cardColors(containerColor = sectionContainerColor),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                if (section.title.isNotBlank() && recipe.ingredientSections.size > 1) {
                                     Text(
-                                        text = qty,
+                                        text = section.title,
                                         style = MaterialTheme.typography.bodyMedium,
                                         fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier.width(80.dp)
+                                        modifier = Modifier.padding(bottom = 4.dp)
                                     )
                                 }
-                                Text(
-                                    text = ingredient.name.capitalizeIngredientFirstLetter(),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
+                                section.ingredients.forEach { ingredient ->
+                                    Row(modifier = Modifier.padding(vertical = 2.dp)) {
+                                        val scaledQty = scaleQuantity(ingredient.quantity, scaleFactor)
+                                        val qty = listOf(scaledQty, ingredient.unit)
+                                            .filter { it.isNotBlank() }
+                                            .joinToString(" ")
+                                        if (qty.isNotBlank()) {
+                                            Text(
+                                                text = qty,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                modifier = Modifier.width(80.dp)
+                                            )
+                                        }
+                                        Text(
+                                            text = ingredient.name.capitalizeIngredientFirstLetter(),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                        )
+                                    }
+                                }
                             }
                         }
-                        Spacer(modifier = Modifier.height(16.dp))
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
                 }
 
                 if (recipe.instructionSections.any { it.steps.isNotEmpty() }) {
                     SectionLabel("Fremgangsmåde")
                     Spacer(modifier = Modifier.height(4.dp))
-                    recipe.instructionSections.forEachIndexed { sIdx, section ->
-                        if (section.steps.isEmpty()) return@forEachIndexed
-                        if (section.title.isNotBlank() && recipe.instructionSections.size > 1) {
-                            Text(
-                                text = section.title,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
-                            )
-                        }
-                        section.steps.forEachIndexed { idx, step ->
-                            val isDone = showStepProgress &&
-                                    completedSteps.any { it.sectionIndex == sIdx && it.stepIndex == idx }
-                            Column(modifier = Modifier.fillMaxWidth()) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .let { m ->
-                                            if (showStepProgress) m.clickable {
-                                                onToggleStep(
-                                                    sIdx,
-                                                    idx
-                                                )
-                                            }
-                                            else m
-                                        }
-                                        .padding(vertical = 3.dp),
-                                    verticalAlignment = Alignment.Top,
-                                ) {
-                                    val circleColor = if (isDone) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.outlineVariant
-                                    Box(
-                                        modifier = Modifier
-                                            .size(28.dp)
-                                            .then(
-                                                if (isDone) Modifier.background(
-                                                    circleColor,
-                                                    CircleShape
-                                                )
-                                                else Modifier.border(1.5.dp, circleColor, CircleShape)
-                                            ),
-                                        contentAlignment = Alignment.Center,
-                                    ) {
-                                        if (isDone) {
-                                            Icon(
-                                                imageVector = Icons.Filled.Check,
-                                                contentDescription = "Udført",
-                                                tint = MaterialTheme.colorScheme.onPrimary,
-                                                modifier = Modifier.size(16.dp),
-                                            )
-                                        } else {
-                                            Text(
-                                                text = "${idx + 1}",
-                                                style = MaterialTheme.typography.labelMedium,
-                                                fontWeight = FontWeight.SemiBold,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            )
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.width(8.dp))
+                    val isDarkRecipeTheme =
+                        MaterialTheme.colorScheme.surface.luminance() < 0.5f
+                    val sectionContainerColor =
+                        if (isDarkRecipeTheme) Color.Transparent else Color.White
+                    val nonEmptyInstructionSections =
+                        recipe.instructionSections.withIndex()
+                            .filter { it.value.steps.isNotEmpty() }
+                    nonEmptyInstructionSections.forEachIndexed { iterIdx, indexed ->
+                        val sIdx = indexed.index
+                        val section = indexed.value
+                        val isFirst = iterIdx == 0
+                        val isLast = iterIdx == nonEmptyInstructionSections.lastIndex
+                        val cardShape = stackedCardShape(isFirst, isLast)
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp),
+                            shape = cardShape,
+                            colors = CardDefaults.cardColors(containerColor = sectionContainerColor),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                if (section.title.isNotBlank() && recipe.instructionSections.size > 1) {
                                     Text(
-                                        text = step,
-                                        modifier = Modifier.weight(1f),
-                                        style = MaterialTheme.typography.bodyMedium.let { s ->
-                                            if (isDone) s.copy(textDecoration = TextDecoration.LineThrough)
-                                            else s
-                                        },
-                                        color = if (isDone) MaterialTheme.colorScheme.onSurfaceVariant
-                                        else MaterialTheme.colorScheme.onSurface,
+                                        text = section.title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.padding(bottom = 4.dp)
                                     )
                                 }
-                                val stepMinutes = remember(step) { parseInstructionMinutes(step) }
-                                if (stepMinutes != null) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(start = 36.dp, top = 4.dp, bottom = 2.dp)
-                                            .clickable {
-                                                startSystemTimer(
-                                                    context = context,
-                                                    durationSeconds = stepMinutes * 60,
-                                                    label = recipe.name,
+                                section.steps.forEachIndexed { idx, step ->
+                                    val isDone = showStepProgress &&
+                                        completedSteps.any { it.sectionIndex == sIdx && it.stepIndex == idx }
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .let { m ->
+                                                    if (showStepProgress) m.clickable {
+                                                        onToggleStep(
+                                                            sIdx,
+                                                            idx
+                                                        )
+                                                    }
+                                                    else m
+                                                }
+                                                .padding(vertical = 3.dp),
+                                            verticalAlignment = Alignment.Top,
+                                        ) {
+                                            val circleColor = if (isDone) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.outlineVariant
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(28.dp)
+                                                    .then(
+                                                        if (isDone) Modifier.background(
+                                                            circleColor,
+                                                            CircleShape
+                                                        )
+                                                        else Modifier.border(1.5.dp, circleColor, CircleShape)
+                                                    ),
+                                                contentAlignment = Alignment.Center,
+                                            ) {
+                                                if (isDone) {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.Check,
+                                                        contentDescription = "Udført",
+                                                        tint = MaterialTheme.colorScheme.onPrimary,
+                                                        modifier = Modifier.size(16.dp),
+                                                    )
+                                                } else {
+                                                    Text(
+                                                        text = "${idx + 1}",
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    )
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = step,
+                                                modifier = Modifier.weight(1f),
+                                                style = MaterialTheme.typography.bodyMedium.let { s ->
+                                                    if (isDone) s.copy(textDecoration = TextDecoration.LineThrough)
+                                                    else s
+                                                },
+                                                color = if (isDone) MaterialTheme.colorScheme.onSurfaceVariant
+                                                else MaterialTheme.colorScheme.onSurface,
+                                            )
+                                        }
+                                        val stepMinutes = remember(step) { parseInstructionMinutes(step) }
+                                        if (stepMinutes != null) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(start = 36.dp, top = 4.dp, bottom = 2.dp)
+                                                    .clickable {
+                                                        startSystemTimer(
+                                                            context = context,
+                                                            durationSeconds = stepMinutes * 60,
+                                                            label = recipe.name,
+                                                        )
+                                                    },
+                                                verticalAlignment = Alignment.CenterVertically,
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Timer,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(20.dp),
                                                 )
-                                            },
-                                        verticalAlignment = Alignment.CenterVertically,
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Timer,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(20.dp),
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
-                                            text = "Start timer",
-                                            style = MaterialTheme.typography.labelLarge,
-                                            color = MaterialTheme.colorScheme.primary,
-                                        )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                    text = "Start timer",
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
-                        Spacer(modifier = Modifier.height(16.dp))
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(24.dp))
                 }
 
                 if (recipe.tips.isNotBlank()) {
@@ -1503,7 +1570,7 @@ private fun RecipeDetailScreen(
                 }
 
                 if (linkedRecipes.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(48.dp))
                     SectionLabel("Se også")
                     Spacer(modifier = Modifier.height(4.dp))
                     linkedRecipes.forEach { linked ->
@@ -1554,6 +1621,45 @@ private fun SectionLabel(text: String) {
     )
 }
 
+private fun stackedCardShape(isFirst: Boolean, isLast: Boolean): RoundedCornerShape {
+    val radius = 12.dp
+    val top = if (isFirst) radius else 0.dp
+    val bottom = if (isLast) radius else 0.dp
+    return RoundedCornerShape(
+        topStart = top,
+        topEnd = top,
+        bottomStart = bottom,
+        bottomEnd = bottom,
+    )
+}
+
+@Suppress("FunctionNaming")
+@Composable
+private fun ServingsStepperButton(
+    symbol: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = CircleShape,
+        color = Color.White,
+        contentColor = Color.Black,
+        modifier = Modifier
+            .size(44.dp)
+            .alpha(if (enabled) 1f else 0.4f),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = symbol,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+    }
+}
+
 private val urlPattern = Regex(
     """https?://[^\s<>\"')\]]+""",
     RegexOption.IGNORE_CASE,
@@ -1566,6 +1672,7 @@ private fun LinkedText(
     style: androidx.compose.ui.text.TextStyle,
     color: Color,
     modifier: Modifier = Modifier,
+    textAlign: TextAlign? = null,
 ) {
     val linkColor = MaterialTheme.colorScheme.primary
     val annotated = remember(text, linkColor) {
@@ -1600,6 +1707,7 @@ private fun LinkedText(
         text = annotated,
         style = style,
         color = color,
+        textAlign = textAlign,
         modifier = modifier,
     )
 }
@@ -2527,7 +2635,7 @@ private fun MenuPlanCard(
                 } else {
                     recipes.forEachIndexed { index, recipe ->
                         if (index > 0) {
-                            Spacer(modifier = Modifier.height(24.dp))
+                            Spacer(modifier = Modifier.height(16.dp))
                         }
                         val totalSteps = recipe.instructionSections.sumOf { it.steps.size }
                         val doneSteps = plan.recipeProgress[recipe.id]?.size ?: 0
@@ -2791,6 +2899,89 @@ private fun buildRecipeSubtitle(recipe: Recipe, showServings: Boolean = true): S
     if (recipe.totalTimeMinutes > 0) parts += "${recipe.totalTimeMinutes} min"
     if (showServings && recipe.servings > 0) parts += "${recipe.servings} pers."
     return parts.joinToString(" · ")
+}
+
+private fun buildRecipeShareText(recipe: Recipe): String = buildString {
+    appendLine(recipe.name)
+    appendLine("=".repeat(recipe.name.length.coerceAtLeast(3)))
+
+    val metaParts = mutableListOf<String>()
+    if (recipe.courseType.isNotBlank()) metaParts += recipe.courseType
+    if (recipe.servings > 0) metaParts += "${recipe.servings} pers."
+    if (recipe.prepTimeMinutes > 0) metaParts += "Tilberedningstid: ${recipe.prepTimeMinutes} min"
+    if (recipe.totalTimeMinutes > 0) metaParts += "Samlet tid: ${recipe.totalTimeMinutes} min"
+    if (metaParts.isNotEmpty()) {
+        appendLine(metaParts.joinToString(" · "))
+    }
+    if (recipe.durability.isNotBlank()) {
+        appendLine("Holdbarhed: ${recipe.durability}")
+    }
+
+    if (recipe.description.isNotBlank()) {
+        appendLine()
+        appendLine(recipe.description.trim())
+    }
+
+    val ingredientSections = recipe.ingredientSections.filter { it.ingredients.isNotEmpty() }
+    if (ingredientSections.isNotEmpty()) {
+        appendLine()
+        appendLine("INGREDIENSER")
+        ingredientSections.forEach { section ->
+            if (section.title.isNotBlank() && ingredientSections.size > 1) {
+                appendLine()
+                appendLine("${section.title}:")
+            }
+            section.ingredients.forEach { ing ->
+                val qty = listOf(ing.quantity.trim(), ing.unit.trim())
+                    .filter { it.isNotBlank() }
+                    .joinToString(" ")
+                val name = ing.name.capitalizeIngredientFirstLetter()
+                val line = if (qty.isNotBlank()) "- $qty $name" else "- $name"
+                appendLine(line)
+            }
+        }
+    }
+
+    val instructionSections = recipe.instructionSections.filter { it.steps.isNotEmpty() }
+    if (instructionSections.isNotEmpty()) {
+        appendLine()
+        appendLine("FREMGANGSMÅDE")
+        instructionSections.forEach { section ->
+            if (section.title.isNotBlank() && instructionSections.size > 1) {
+                appendLine()
+                appendLine("${section.title}:")
+            }
+            section.steps.forEachIndexed { idx, step ->
+                appendLine("${idx + 1}. ${step.trim()}")
+            }
+        }
+    }
+
+    if (recipe.tips.isNotBlank()) {
+        appendLine()
+        appendLine("TIPS")
+        appendLine(recipe.tips.trim())
+    }
+
+    appendLine()
+    appendLine("Delt med glæde fra ShoppingShark appen 🫶")
+}.trimEnd()
+
+private fun shareRecipe(context: android.content.Context, recipe: Recipe) {
+    val text = buildRecipeShareText(recipe)
+    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_SUBJECT, recipe.name)
+        putExtra(Intent.EXTRA_TEXT, text)
+    }
+    val chooser = Intent.createChooser(sendIntent, "Del opskrift").apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    try {
+        context.startActivity(chooser)
+    } catch (e: ActivityNotFoundException) {
+        Toast.makeText(context, "Ingen apps kan dele tekst", Toast.LENGTH_SHORT).show()
+    }
 }
 
 @Suppress("FunctionNaming")
