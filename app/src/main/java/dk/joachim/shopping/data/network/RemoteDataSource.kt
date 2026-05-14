@@ -9,6 +9,9 @@ import dk.joachim.shopping.data.Recipe
 import dk.joachim.shopping.data.ReorderRequest
 import dk.joachim.shopping.data.Shop
 import dk.joachim.shopping.data.UserCategory
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import retrofit2.HttpException
 
 /**
@@ -58,6 +61,34 @@ object RemoteDataSource {
         val ex = result.exceptionOrNull()
         if (ex is HttpException && ex.code() == 404) return null
         return result.getOrThrow()
+    }
+
+    /** Outcome of asking the server to e-mail the activation code for [requestActivationCodeEmail]. */
+    sealed interface SendActivationCodeResult {
+        data object Sent : SendActivationCodeResult
+        data object EmailUnknown : SendActivationCodeResult
+        /** Server returned a non-success status; [detail] is the server's "detail" field if any. */
+        data class Failed(val detail: String?) : SendActivationCodeResult
+    }
+
+    /**
+     * Asks the server to email the activation code to [email] if it's registered.
+     * Maps server response codes: 204 → Sent, 404 → EmailUnknown, anything else → Failed.
+     */
+    suspend fun requestActivationCodeEmail(email: String): SendActivationCodeResult {
+        val result = runCatching { api.requestActivationCode(RequestActivationCodeRequest(email)) }
+        val ex = result.exceptionOrNull() ?: return SendActivationCodeResult.Sent
+        if (ex is HttpException && ex.code() == 404) return SendActivationCodeResult.EmailUnknown
+        val detail = (ex as? HttpException)?.response()?.errorBody()?.string()?.let { raw ->
+            runCatching {
+                Json { ignoreUnknownKeys = true }
+                    .parseToJsonElement(raw)
+                    .jsonObject["detail"]
+                    ?.jsonPrimitive
+                    ?.content
+            }.getOrNull()
+        }
+        return SendActivationCodeResult.Failed(detail)
     }
 
     suspend fun getProfile(id: String): Profile? =

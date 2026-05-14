@@ -130,7 +130,7 @@ class CookingViewModel : ViewModel() {
     val clearRecipeSearchFocus = _clearRecipeSearchFocus.asSharedFlow()
     private val _userCategories = MutableStateFlow<List<UserCategory>>(emptyList())
 
-    // Nested combine(3)+combine(3)+lastListId: last list id must be a flow so UI updates when the user opens another list (prefs alone does not emit).
+    // Nested combine(3)+combine(3)+lastListId+standaloneProgress: last list id must be a flow so UI updates when the user opens another list (prefs alone does not emit).
     val uiState = combine(
         combine(
             repository.menuPlans,
@@ -147,16 +147,19 @@ class CookingViewModel : ViewModel() {
             Triple(catalogItems, userCategories, extra)
         },
         repository.lastListId,
-    ) { core, meta, lastListId ->
+        repository.standaloneRecipeProgress,
+    ) { core, meta, lastListId, standaloneProgress ->
         val plans = core.first
         val recipes = core.second
         val lists = core.third
         val extra = meta.third
-        val completed = extra.viewingMenuPlanId?.let { planId ->
-            val recipeId = extra.viewingRecipe?.id
-            if (recipeId != null) plans.firstOrNull { it.id == planId }?.recipeProgress?.get(recipeId)
-            else null
-        }.orEmpty()
+        val recipeId = extra.viewingRecipe?.id
+        val completed = if (extra.viewingMenuPlanId != null) {
+            if (recipeId != null) plans.firstOrNull { it.id == extra.viewingMenuPlanId }?.recipeProgress?.get(recipeId).orEmpty()
+            else emptyList()
+        } else {
+            recipeId?.let { standaloneProgress[it] }.orEmpty()
+        }
         val targetList = lists.firstOrNull { it.id == lastListId } ?: lists.firstOrNull()
         CookingUiState(
             menuPlans = plans,
@@ -216,6 +219,11 @@ class CookingViewModel : ViewModel() {
     /** Fetches latest menu plans (including recipe progress) from the server — call when opening the Cooking tab. */
     fun syncMenuPlansFromServer() {
         viewModelScope.launch { repository.syncMenuPlans() }
+    }
+
+    /** Fetches latest recipes from the server — call when opening the Cooking tab. */
+    fun syncRecipesFromServer() {
+        viewModelScope.launch { repository.syncRecipes() }
     }
 
     /**
@@ -421,7 +429,17 @@ class CookingViewModel : ViewModel() {
     fun dismissDeleteRecipeDialog() = _extra.update { it.copy(pendingDeleteRecipe = null) }
     fun confirmDeleteRecipe() {
         val recipe = _extra.value.pendingDeleteRecipe ?: return
-        _extra.update { it.copy(pendingDeleteRecipe = null) }
+        val wasViewing = _extra.value.viewingRecipe?.id == recipe.id
+        val wasEditing = _extra.value.editingRecipe?.id == recipe.id
+        _extra.update {
+            it.copy(
+                pendingDeleteRecipe = null,
+                viewingRecipe = if (wasViewing) null else it.viewingRecipe,
+                viewingMenuPlanId = if (wasViewing) null else it.viewingMenuPlanId,
+                recipeViewerBackStack = if (wasViewing) emptyList() else it.recipeViewerBackStack,
+                editingRecipe = if (wasEditing) null else it.editingRecipe,
+            )
+        }
         repository.deleteRecipe(recipe.id)
     }
 
@@ -602,9 +620,13 @@ class CookingViewModel : ViewModel() {
     }
 
     fun toggleStepCompletion(sectionIndex: Int, stepIndex: Int) {
-        val planId = _extra.value.viewingMenuPlanId ?: return
         val recipeId = _extra.value.viewingRecipe?.id ?: return
-        repository.toggleStepCompletion(planId, recipeId, sectionIndex, stepIndex)
+        val planId = _extra.value.viewingMenuPlanId
+        if (planId != null) {
+            repository.toggleStepCompletion(planId, recipeId, sectionIndex, stepIndex)
+        } else {
+            repository.toggleStandaloneStepCompletion(recipeId, sectionIndex, stepIndex)
+        }
     }
 
     fun startEditingFromViewer() {

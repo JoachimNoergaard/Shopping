@@ -82,7 +82,10 @@ fun OnboardingScreen(
             label = "onboarding_step",
         ) { step ->
             when (step) {
-                OnboardingStep.WELCOME -> WelcomeStep(onNext = viewModel::goToProfileStep)
+                OnboardingStep.WELCOME -> WelcomeStep(
+                    onNext = viewModel::goToProfileStep,
+                    onLogin = viewModel::goToLoginStep,
+                )
                 OnboardingStep.PROFILE -> ProfileStep(
                     name = uiState.name,
                     email = uiState.email,
@@ -101,13 +104,26 @@ fun OnboardingScreen(
                     onSubmit = viewModel::verifyCode,
                     onBack = viewModel::goBackToProfile,
                 )
+                OnboardingStep.LOGIN -> LoginStep(
+                    email = uiState.loginEmail,
+                    code = uiState.loginCode,
+                    codeSent = uiState.loginCodeSent,
+                    isSubmitting = uiState.isSubmitting,
+                    error = uiState.error,
+                    info = uiState.info,
+                    onEmailChange = viewModel::updateLoginEmail,
+                    onCodeChange = viewModel::updateLoginCode,
+                    onSendCode = viewModel::sendLoginCode,
+                    onVerifyCode = viewModel::verifyLoginCode,
+                    onBack = viewModel::goBackToWelcomeFromLogin,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun WelcomeStep(onNext: () -> Unit) {
+private fun WelcomeStep(onNext: () -> Unit, onLogin: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -185,6 +201,18 @@ private fun WelcomeStep(onNext: () -> Unit) {
                 text = "Kom i gang",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
+            )
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        TextButton(
+            onClick = onLogin,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(
+                text = "Har du allerede en konto? Log ind",
+                style = MaterialTheme.typography.bodyMedium,
             )
         }
     }
@@ -386,7 +414,7 @@ private fun VerifyCodeStep(
         Spacer(Modifier.height(12.dp))
 
         Text(
-            text = "E-mailen $email er allerede registreret.\n\nÅbn SharkShopper på din anden enhed, gå til Profil og indtast aktiveringskoden, som vises.\n\nHar du ikke længere adgang til din tidligere enhed, eller virker koden ikke? Kontakt os på joachim@joachim.dk.",
+            text = "E-mailen $email er allerede registreret.\n\nVi har sendt en 6-cifret aktiveringskode til $email. Tjek din indbakke (og evt. spam-mappen) og indtast koden nedenfor.\n\nKoden kan også ses under Profil på din anden enhed. Virker det ikke? Skriv til joachim@joachim.dk.",
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -448,6 +476,160 @@ private fun VerifyCodeStep(
 
         TextButton(onClick = onBack) {
             Text("Brug en anden e-mail")
+        }
+    }
+}
+
+@Composable
+private fun LoginStep(
+    email: String,
+    code: String,
+    codeSent: Boolean,
+    isSubmitting: Boolean,
+    error: String?,
+    info: String?,
+    onEmailChange: (String) -> Unit,
+    onCodeChange: (String) -> Unit,
+    onSendCode: () -> Unit,
+    onVerifyCode: () -> Unit,
+    onBack: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 32.dp, vertical = 48.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(0.dp),
+    ) {
+        Spacer(Modifier.height(40.dp))
+
+        Box(
+            modifier = Modifier
+                .size(80.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Default.Lock,
+                contentDescription = null,
+                modifier = Modifier.size(40.dp),
+                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+            )
+        }
+
+        Spacer(Modifier.height(28.dp))
+
+        Text(
+            text = "Log ind på din konto",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        Text(
+            text = if (codeSent) {
+                "Indtast den 6-cifrede aktiveringskode, vi har sendt til din e-mail."
+            } else {
+                "Indtast din e-mail, så sender vi en 6-cifret aktiveringskode."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        Spacer(Modifier.height(36.dp))
+
+        OutlinedTextField(
+            value = email,
+            onValueChange = onEmailChange,
+            label = { Text("E-mail") },
+            leadingIcon = { Icon(Icons.Default.Email, contentDescription = null) },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            singleLine = true,
+            enabled = !codeSent || !isSubmitting,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+        )
+
+        if (codeSent) {
+            Spacer(Modifier.height(16.dp))
+            OutlinedTextField(
+                value = code,
+                onValueChange = onCodeChange,
+                label = { Text("Aktiveringskode") },
+                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null) },
+                placeholder = { Text("6-cifret kode") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                isError = error != null,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                textStyle = MaterialTheme.typography.titleLarge.copy(
+                    letterSpacing = androidx.compose.ui.unit.TextUnit(6f, androidx.compose.ui.unit.TextUnitType.Sp)
+                ),
+            )
+        }
+
+        if (info != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = info,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center,
+            )
+        }
+
+        if (error != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = error,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+
+        Spacer(Modifier.height(32.dp))
+
+        Button(
+            onClick = if (codeSent) onVerifyCode else onSendCode,
+            enabled = !isSubmitting &&
+                email.isNotBlank() &&
+                (!codeSent || code.length == 6),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            shape = RoundedCornerShape(14.dp),
+        ) {
+            if (isSubmitting) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(22.dp),
+                    strokeWidth = 2.5.dp,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                )
+            } else {
+                Text(
+                    text = if (codeSent) "Log ind" else "Send kode",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        if (codeSent) {
+            TextButton(onClick = onSendCode, enabled = !isSubmitting) {
+                Text("Send koden igen")
+            }
+        }
+
+        TextButton(onClick = onBack) {
+            Text("Tilbage")
         }
     }
 }

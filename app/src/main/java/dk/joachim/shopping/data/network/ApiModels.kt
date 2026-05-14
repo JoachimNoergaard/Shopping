@@ -30,6 +30,9 @@ data class PatchListRequest(val name: String)
 @Serializable
 data class AddMemberRequest(val profileId: String)
 
+@Serializable
+data class RequestActivationCodeRequest(val email: String)
+
 // ── Menu plans ────────────────────────────────────────────────────────────────
 
 @Serializable

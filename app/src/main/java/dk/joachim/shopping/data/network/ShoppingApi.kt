@@ -60,6 +60,9 @@ interface ShoppingApi {
     @GET("profile/by-email")
     suspend fun findProfileByEmail(@Query("email") email: String): Profile
 
+    @POST("profile/by-email/send-code")
+    suspend fun requestActivationCode(@Body request: RequestActivationCodeRequest)
+
     @GET("profile/{id}")
     suspend fun getProfile(@Path("id") id: String): Profile
 

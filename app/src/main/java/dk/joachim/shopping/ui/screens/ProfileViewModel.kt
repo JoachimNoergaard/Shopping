@@ -14,6 +14,7 @@ data class ProfileUiState(
     val isLoading: Boolean = true,
     val isSaving: Boolean = false,
     val saveSuccess: Boolean = false,
+    val loggedOut: Boolean = false,
 )
 
 
@@ -47,5 +48,10 @@ class ProfileViewModel : ViewModel() {
             repository.saveProfile(_uiState.value.name, _uiState.value.email, _uiState.value.activationCode)
             _uiState.update { it.copy(isSaving = false, saveSuccess = true) }
         }
+    }
+
+    fun logout() {
+        repository.logout()
+        _uiState.update { it.copy(loggedOut = true) }
     }
 }

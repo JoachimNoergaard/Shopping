@@ -26,10 +26,30 @@
  */
 
 // ── Database config — fill these in ───────────────────────────────────────
+// DB_PASS lives in secrets.php (loaded below).
 define('DB_HOST', 'localhost');
 define('DB_NAME', 'joachimd_shopping');
 define('DB_USER', 'joachimd_shopping');
-define('DB_PASS', 'Erk$*XbB%q(8#ge^');
+
+// ── Mail config ───────────────────────────────────────────────────────────
+// Sender identity (visible to recipients):
+define('MAIL_FROM_ADDRESS', 'noreply@joachim.dk');
+define('MAIL_FROM_NAME',    'ShoppingShark');
+define('MAIL_REPLY_TO',     'joachim@joachim.dk');
+// SMTP transport via nordicway.dk. Their docs use mail.<yourdomain> on port 465
+// with SSL; username is the full email address, password is the mailbox
+// password set in nordicway's control panel. Make sure the mailbox for
+// noreply@joachim.dk exists in nordicway before sending.
+// Leave MAIL_SMTP_HOST empty to fall back to PHP mail().
+define('MAIL_SMTP_HOST',     'mail.joachim.dk');
+define('MAIL_SMTP_PORT',     465);
+define('MAIL_SMTP_USER',     'noreply@joachim.dk');
+define('MAIL_SMTP_SECURE',   'ssl'); // 'tls' (port 587), 'ssl' (port 465), or '' to disable encryption
+
+// Secrets (mailbox password, etc.) live in secrets.php, which is git-ignored.
+// See secrets.example.php for the expected shape. The file is required so we
+// fail fast in development if it's missing.
+require_once __DIR__ . '/secrets.php';
 
 // ── Headers ────────────────────────────────────────────────────────────────
 header('Content-Type: application/json; charset=utf-8');
@@ -41,6 +61,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(204);
     exit;
 }
+
+// ── Diagnostics ───────────────────────────────────────────────────────────
+// Surface fatal PHP errors as a JSON 500 response. Without this, shared hosts
+// with display_errors=off return an empty body and the client only sees an
+// opaque 500 with no clue what failed. Safe to leave on — only logs the error
+// text, no stack traces, and doesn't suppress anything.
+error_reporting(E_ALL);
+ini_set('display_errors', '0');
+ini_set('log_errors', '1');
+register_shutdown_function(function () {
+    $err = error_get_last();
+    if ($err === null) return;
+    $fatalTypes = E_ERROR | E_CORE_ERROR | E_COMPILE_ERROR | E_USER_ERROR | E_PARSE | E_RECOVERABLE_ERROR;
+    if (($err['type'] & $fatalTypes) === 0) return;
+    if (!headers_sent()) {
+        http_response_code(500);
+        header('Content-Type: application/json; charset=utf-8');
+    }
+    echo json_encode([
+        'error'  => 'Fatal PHP error',
+        'detail' => $err['message'] . ' in ' . basename($err['file']) . ':' . $err['line'],
+    ], JSON_UNESCAPED_UNICODE);
+});
+set_exception_handler(function (\Throwable $e) {
+    if (!headers_sent()) {
+        http_response_code(500);
+        header('Content-Type: application/json; charset=utf-8');
+    }
+    echo json_encode([
+        'error'  => 'Uncaught exception',
+        'detail' => get_class($e) . ': ' . $e->getMessage() . ' in ' . basename($e->getFile()) . ':' . $e->getLine(),
+    ], JSON_UNESCAPED_UNICODE);
+});
 
 // ── Database connection ────────────────────────────────────────────────────
 $db = new PDO(
@@ -64,13 +117,6 @@ $db->exec('CREATE TABLE IF NOT EXISTS lists (
     PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
 
-// Add owner_id column to existing tables that were created before this field existed
-try {
-    $db->exec("ALTER TABLE lists ADD COLUMN owner_id VARCHAR(36) NOT NULL DEFAULT ''");
-} catch (PDOException $e) {
-    // Column already exists — ignore
-}
-
 $db->exec('CREATE TABLE IF NOT EXISTS items (
     id          VARCHAR(36)  NOT NULL,
     list_id     VARCHAR(36)  NOT NULL,
@@ -87,13 +133,6 @@ $db->exec('CREATE TABLE IF NOT EXISTS items (
     PRIMARY KEY (id),
     FOREIGN KEY (list_id) REFERENCES lists(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-
-// Add comment column to existing tables that were created before this field existed
-try {
-    $db->exec('ALTER TABLE items ADD COLUMN comment TEXT');
-} catch (PDOException $e) {
-    // Column already exists — ignore
-}
 
 $db->exec('CREATE TABLE IF NOT EXISTS categories (
     id          VARCHAR(36)  NOT NULL,
@@ -114,16 +153,6 @@ $db->exec('CREATE TABLE IF NOT EXISTS profiles (
     PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
 // Migration: add email column for databases created before it was introduced
-try {
-    $db->exec("ALTER TABLE profiles ADD COLUMN email VARCHAR(255) NOT NULL DEFAULT ''");
-} catch (PDOException $e) { /* already exists, ignore */ }
-try {
-    $db->exec('ALTER TABLE profiles ADD INDEX idx_profiles_email (email)');
-} catch (PDOException $e) { /* already exists, ignore */ }
-// Migration: add activation_code column for databases created before it was introduced
-try {
-    $db->exec("ALTER TABLE profiles ADD COLUMN activation_code VARCHAR(10) NOT NULL DEFAULT ''");
-} catch (PDOException $e) { /* already exists, ignore */ }
 
 $db->exec('CREATE TABLE IF NOT EXISTS shops (
     id               VARCHAR(36)  NOT NULL,
@@ -172,30 +201,13 @@ $db->exec('CREATE TABLE IF NOT EXISTS recipes (
     instruction_sections TEXT         NOT NULL,
     tips                 TEXT         NOT NULL,
     image_url            VARCHAR(768) NULL,
+    linked_recipe_ids    TEXT         NOT NULL DEFAULT \'[]\',
     created_at           BIGINT       NOT NULL,
     updated_at           BIGINT       NOT NULL,
     PRIMARY KEY (id),
     INDEX idx_recipes_profile (profile_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
 
-// Migration: add new recipe columns for databases created before they existed
-foreach ([
-    "ALTER TABLE recipes ADD COLUMN rating INT NOT NULL DEFAULT 0",
-    "ALTER TABLE recipes ADD COLUMN servings INT NOT NULL DEFAULT 0",
-    "ALTER TABLE recipes ADD COLUMN nutrition_facts TEXT NOT NULL DEFAULT ''",
-    "ALTER TABLE recipes ADD COLUMN prep_time_minutes INT NOT NULL DEFAULT 0",
-    "ALTER TABLE recipes ADD COLUMN total_time_minutes INT NOT NULL DEFAULT 0",
-    "ALTER TABLE recipes ADD COLUMN durability VARCHAR(255) NOT NULL DEFAULT ''",
-    "ALTER TABLE recipes ADD COLUMN course_type VARCHAR(100) NOT NULL DEFAULT ''",
-    "ALTER TABLE recipes ADD COLUMN ingredient_sections TEXT NOT NULL DEFAULT '[]'",
-    "ALTER TABLE recipes ADD COLUMN instruction_sections TEXT NOT NULL DEFAULT '[]'",
-    "ALTER TABLE recipes ADD COLUMN tips TEXT NOT NULL DEFAULT ''",
-] as $sql) {
-    try { $db->exec($sql); } catch (PDOException $e) { /* already exists */ }
-}
-
-try { $db->exec('ALTER TABLE recipes ADD COLUMN image_jpeg MEDIUMBLOB NULL'); } catch (PDOException $e) { /* already exists */ }
-try { $db->exec('ALTER TABLE recipes ADD COLUMN image_url VARCHAR(768) NULL'); } catch (PDOException $e) { /* already exists */ }
 
 // ── Recipe images (files on disk) ─────────────────────────────────────────
 define('RECIPE_IMAGES_SUBDIR', 'recipe_images');
@@ -275,10 +287,7 @@ function migrate_legacy_recipe_blobs_to_files(PDO $db): void
         if (@file_put_contents($full, $r['image_jpeg']) !== false) {
             $db->prepare('UPDATE recipes SET image_url = ?, image_jpeg = NULL WHERE id = ?')->execute([$rel, $id]);
         }
-    }
-    try {
-        $db->exec('ALTER TABLE recipes DROP COLUMN image_jpeg');
-    } catch (PDOException $e) { /* already dropped */ }
+    }    
 }
 
 ensure_recipe_images_dir();
@@ -295,10 +304,6 @@ $db->exec('CREATE TABLE IF NOT EXISTS menu_plans (
     PRIMARY KEY (id),
     INDEX idx_menu_plans_profile (profile_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-
-try { $db->exec('ALTER TABLE menu_plans ADD COLUMN recipe_progress TEXT NOT NULL DEFAULT \'{}\''); } catch (PDOException $e) { /* already exists */ }
-try { $db->exec('ALTER TABLE menu_plans ADD COLUMN servings INT NOT NULL DEFAULT 0'); } catch (PDOException $e) { /* already exists */ }
-try { $db->exec('ALTER TABLE menu_plans ADD COLUMN recipe_servings TEXT NOT NULL DEFAULT \'{}\''); } catch (PDOException $e) { /* already exists */ }
 
 $db->exec('CREATE TABLE IF NOT EXISTS menu_plan_recipes (
     menu_plan_id VARCHAR(36) NOT NULL,
@@ -357,6 +362,74 @@ function not_found(): never
     json_out(['error' => 'Not found'], 404);
 }
 
+/**
+ * Sends the activation code to [$toEmail] using PHPMailer (manual-install drop in
+ * /server/phpmailer/).
+ *
+ * Uses SMTP when MAIL_SMTP_HOST is configured; otherwise falls back to PHPMailer's
+ * isMail() transport, which still wraps the message in proper MIME headers/Message-Id
+ * (much better deliverability than raw mail()).
+ *
+ * @return bool|string True on success, or a short error message on failure.
+ */
+function send_activation_code_email(string $toEmail, string $toName, string $code): bool|string
+{
+    $base = __DIR__ . '/phpmailer';
+    require_once $base . '/Exception.php';
+    require_once $base . '/PHPMailer.php';
+    require_once $base . '/SMTP.php';
+
+    $mailer = new \PHPMailer\PHPMailer\PHPMailer(true);
+    try {
+        if (MAIL_SMTP_HOST !== '') {
+            $mailer->isSMTP();
+            $mailer->Host       = MAIL_SMTP_HOST;
+            $mailer->Port       = (int) MAIL_SMTP_PORT;
+            $mailer->SMTPAuth   = MAIL_SMTP_USER !== '';
+            if ($mailer->SMTPAuth) {
+                $mailer->Username = MAIL_SMTP_USER;
+                $mailer->Password = MAIL_SMTP_PASS;
+            }
+            if (MAIL_SMTP_SECURE !== '') {
+                $mailer->SMTPSecure = MAIL_SMTP_SECURE;
+            }
+        } else {
+            $mailer->isMail();
+            // Many shared hosts reject sendmail with the -f envelope-sender flag,
+            // which PHPMailer passes by default. Disabling this is the single
+            // most common fix when mail() unexpectedly returns false.
+            $mailer->UseSendmailOptions = false;
+        }
+
+        $mailer->CharSet  = 'UTF-8';
+        $mailer->Encoding = '8bit';
+
+        $mailer->setFrom(MAIL_FROM_ADDRESS, MAIL_FROM_NAME);
+        if (MAIL_REPLY_TO !== '') {
+            $mailer->addReplyTo(MAIL_REPLY_TO);
+        }
+        $mailer->addAddress($toEmail, $toName);
+
+        $greetingName = $toName !== '' ? $toName : 'der';
+        $mailer->Subject = 'Din aktiveringskode til ShoppingShark';
+        $mailer->isHTML(false);
+        $mailer->Body =
+            "Hej $greetingName,\r\n\r\n" .
+            "Din aktiveringskode til ShoppingShark er:\r\n\r\n" .
+            "    $code\r\n\r\n" .
+            "Indtast koden i appen for at logge ind på din konto.\r\n\r\n" .
+            "Hvis du ikke har bedt om denne kode, kan du roligt ignorere mailen.\r\n\r\n" .
+            "Venlig hilsen,\r\nShoppingShark";
+
+        $mailer->send();
+        return true;
+    } catch (\PHPMailer\PHPMailer\Exception $e) {
+        return $mailer->ErrorInfo !== '' ? $mailer->ErrorInfo : $e->getMessage();
+    } catch (\Throwable $e) {
+        return $e->getMessage();
+    }
+}
+
 function menuPlanToJson(PDO $db, array $row): array
 {
     $stmt = $db->prepare('SELECT recipe_id FROM menu_plan_recipes WHERE menu_plan_id = ? ORDER BY sort_order ASC');
@@ -376,8 +449,38 @@ function menuPlanToJson(PDO $db, array $row): array
     ];
 }
 
+/**
+ * Drop any list entries that aren't JSON objects (associative arrays).
+ * Some legacy rows stored stray "[]" placeholders inside ingredient_sections /
+ * instruction_sections, which would otherwise break the strict client-side
+ * decoder (expects {title, steps|ingredients}, not a bare array).
+ */
+function sanitize_section_list($value): array
+{
+    if (!is_array($value)) return [];
+    $out = [];
+    foreach ($value as $entry) {
+        // PHP json_decode($, true) gives associative arrays for JSON objects
+        // and sequential arrays for JSON arrays. Keep only associative ones.
+        if (is_array($entry) && (count($entry) === 0
+                ? false                                  // strip empty []
+                : array_keys($entry) !== range(0, count($entry) - 1))
+        ) {
+            $out[] = $entry;
+        }
+    }
+    return $out;
+}
+
 function recipeToJson(array $row): array
 {
+    $ingredientSections  = sanitize_section_list(
+        json_decode($row['ingredient_sections'] ?? '[]', true)
+    );
+    $instructionSections = sanitize_section_list(
+        json_decode($row['instruction_sections'] ?? '[]', true)
+    );
+
     $out = [
         'id'                  => $row['id'],
         'profileId'           => $row['profile_id'],
@@ -390,10 +493,11 @@ function recipeToJson(array $row): array
         'totalTimeMinutes'    => (int) ($row['total_time_minutes'] ?? 0),
         'durability'          => $row['durability'] ?? '',
         'courseType'           => $row['course_type'] ?? '',
-        'ingredientSections'  => json_decode($row['ingredient_sections'] ?? '[]', true) ?: [],
-        'instructionSections' => json_decode($row['instruction_sections'] ?? '[]', true) ?: [],
+        'ingredientSections'  => $ingredientSections,
+        'instructionSections' => $instructionSections,
         'tips'                => $row['tips'] ?? '',
         'createdAt'           => (int) $row['created_at'],
+        'linkedRecipeIds'     => json_decode($row['linked_recipe_ids'] ?? '[]', true) ?: [],
     ];
     $abs = absolute_recipe_image_url($row['image_url'] ?? null);
     if ($abs !== null && $abs !== '') {
@@ -724,6 +828,34 @@ if ($method === 'GET' && count($segments) === 2 && $segments[0] === 'profile' &&
     json_out(['id' => $row['id'], 'name' => $row['name'], 'email' => $row['email'], 'activationCode' => $row['activation_code']]);
 }
 
+// ── POST /profile/by-email/send-code  body: {"email":"..."} ───────────────
+//
+// Emails the activation code to the user if the address is registered.
+// Returns 204 on successful send, 404 if no profile uses that email, 500 if
+// the PHPMailer transport itself fails. The 500 body includes a "detail" field
+// with the underlying PHPMailer ErrorInfo for debugging.
+if ($method === 'POST' && count($segments) === 3 && $segments[0] === 'profile' && $segments[1] === 'by-email' && $segments[2] === 'send-code') {
+    $email = trim($body['email'] ?? '');
+    if ($email === '') json_out(['error' => 'Missing email'], 400);
+
+    $stmt = $db->prepare('SELECT activation_code, name FROM profiles WHERE email = ? LIMIT 1');
+    $stmt->execute([$email]);
+    $row = $stmt->fetch();
+    if (!$row) not_found();
+
+    $code = (string) $row['activation_code'];
+    if ($code === '') json_out(['error' => 'Profile has no activation code'], 500);
+
+    $displayName = trim((string) $row['name']);
+    $result = send_activation_code_email($email, $displayName, $code);
+    if ($result !== true) {
+        json_out(['error' => 'Failed to send email', 'detail' => $result], 500);
+    }
+
+    http_response_code(204);
+    exit;
+}
+
 // ── GET /profile/{id} ─────────────────────────────────────────────────────
 if ($method === 'GET' && count($segments) === 2 && $segments[0] === 'profile') {
     $stmt = $db->prepare('SELECT * FROM profiles WHERE id = ?');
@@ -763,8 +895,8 @@ if ($method === 'PUT' && count($segments) === 4 && $segments[0] === 'profile' &&
     $db->prepare('
         INSERT INTO recipes (id, profile_id, name, description, rating, servings, nutrition_facts,
             prep_time_minutes, total_time_minutes, durability, course_type,
-            ingredient_sections, instruction_sections, tips, created_at, updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ingredient_sections, instruction_sections, tips, linked_recipe_ids, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON DUPLICATE KEY UPDATE
             name                 = VALUES(name),
             description          = VALUES(description),
@@ -778,6 +910,7 @@ if ($method === 'PUT' && count($segments) === 4 && $segments[0] === 'profile' &&
             ingredient_sections  = VALUES(ingredient_sections),
             instruction_sections = VALUES(instruction_sections),
             tips                 = VALUES(tips),
+            linked_recipe_ids    = VALUES(linked_recipe_ids),
             updated_at           = VALUES(updated_at)
     ')->execute([
         $id,
@@ -794,6 +927,7 @@ if ($method === 'PUT' && count($segments) === 4 && $segments[0] === 'profile' &&
         json_encode($body['ingredientSections'] ?? [], JSON_UNESCAPED_UNICODE),
         json_encode($body['instructionSections'] ?? [], JSON_UNESCAPED_UNICODE),
         $body['tips'] ?? '',
+        json_encode($body['linkedRecipeIds'] ?? [], JSON_UNESCAPED_UNICODE),
         $body['createdAt'] ?? $now,
         $now,
     ]);

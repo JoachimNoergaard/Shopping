@@ -1,5 +1,11 @@
 package dk.joachim.shopping.ui.screens
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.provider.AlarmClock
+import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -8,7 +14,9 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,14 +53,14 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -68,6 +76,7 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -80,6 +89,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -87,6 +97,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -126,10 +137,9 @@ import dk.joachim.shopping.data.RecipePhotoStorage
 import dk.joachim.shopping.data.Recipe
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import dk.joachim.shopping.data.RecipeStepTimer
-import dk.joachim.shopping.data.RecipeStepTimerEntry
 import dk.joachim.shopping.data.capitalizeIngredientFirstLetter
 import dk.joachim.shopping.data.parseInstructionMinutes
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -141,6 +151,7 @@ fun CookingScreen(
     onResetAppBarScroll: () -> Unit = {},
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val recipeCourseTypeSuggestions = remember(uiState.recipes) {
         distinctRecipeCourseTypes(uiState.recipes)
     }
@@ -153,6 +164,7 @@ fun CookingScreen(
             allRecipesForPicker = uiState.recipes,
             onRecipeChange = viewModel::updateEditingRecipe,
             onSave = viewModel::saveEditingRecipe,
+            onDelete = { viewModel.requestDeleteRecipe(uiState.editingRecipe!!) },
             onDismiss = viewModel::dismissRecipeEditor,
             onAddIngredientSection = viewModel::addIngredientSection,
             onRemoveIngredientSection = viewModel::removeIngredientSection,
@@ -169,6 +181,22 @@ fun CookingScreen(
             onUpdateInstructionStep = viewModel::updateInstructionStep,
             onReorderInstructions = viewModel::reorderInstructions,
         )
+        uiState.pendingDeleteRecipe?.let { recipe ->
+            AlertDialog(
+                onDismissRequest = viewModel::dismissDeleteRecipeDialog,
+                title = { Text("Slet opskrift") },
+                text = { Text("\"${recipe.name}\" slettes og fjernes fra alle madplaner. Dette kan ikke fortrydes.") },
+                confirmButton = {
+                    Button(
+                        onClick = viewModel::confirmDeleteRecipe,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    ) { Text("Slet") }
+                },
+                dismissButton = {
+                    TextButton(onClick = viewModel::dismissDeleteRecipeDialog) { Text("Annuller") }
+                },
+            )
+        }
         return
     }
 
@@ -178,7 +206,7 @@ fun CookingScreen(
             recipe = uiState.viewingRecipe!!,
             allRecipes = uiState.recipes,
             completedSteps = uiState.completedSteps,
-            showStepProgress = uiState.viewingMenuPlanId != null,
+            showStepProgress = true,
             onToggleStep = viewModel::toggleStepCompletion,
             planServings = uiState.viewingMenuPlanId?.let { pid ->
                 val plan = uiState.menuPlans.firstOrNull { it.id == pid }
@@ -206,14 +234,33 @@ fun CookingScreen(
             else emptyList(),
             onAddToPlan = { planId ->
                 viewModel.addRecipeToMenuPlan(planId, uiState.viewingRecipe!!.id)
+                val planName = uiState.menuPlans.firstOrNull { it.id == planId }?.name
+                Toast.makeText(context, "Tilføjet til $planName", Toast.LENGTH_SHORT).show()
             },
             onCreatePlanAndAdd = { name ->
                 viewModel.createMenuPlanAndAddRecipe(name, uiState.viewingRecipe!!.id)
+                Toast.makeText(context, "Tilføjet til $name", Toast.LENGTH_SHORT).show()
             },
             onEdit = viewModel::startEditingFromViewer,
             onOpenLinkedRecipe = viewModel::openLinkedRecipe,
             onDismiss = viewModel::onRecipeViewerBack,
         )
+        uiState.pendingDeleteRecipe?.let { recipe ->
+            AlertDialog(
+                onDismissRequest = viewModel::dismissDeleteRecipeDialog,
+                title = { Text("Slet opskrift") },
+                text = { Text("\"${recipe.name}\" slettes og fjernes fra alle madplaner. Dette kan ikke fortrydes.") },
+                confirmButton = {
+                    Button(
+                        onClick = viewModel::confirmDeleteRecipe,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    ) { Text("Slet") }
+                },
+                dismissButton = {
+                    TextButton(onClick = viewModel::dismissDeleteRecipeDialog) { Text("Annuller") }
+                },
+            )
+        }
         return
     }
 
@@ -346,7 +393,7 @@ fun CookingScreen(
                     if (showRecipeSearchList) {
                         if (recipesForSearchList.isEmpty()) {
                             item(key = "empty_search") {
-                                EmptyMenuPlansState(
+                                EmptyRecipesState(
                                     isFiltered = uiState.searchQuery.isNotBlank() ||
                                         !uiState.recipeCourseTypeFilter.isNullOrBlank(),
                                     modifier = Modifier.fillMaxWidth(),
@@ -363,8 +410,13 @@ fun CookingScreen(
                                     }
                                     SearchRecipeRow(
                                         recipe = recipe,
+                                        menuPlans = uiState.menuPlans,
                                         onClick = { viewModel.openRecipeViewer(recipe) },
-                                        onDelete = { viewModel.requestDeleteRecipe(recipe) },
+                                        onAddToPlan = { planId ->
+                                            viewModel.addRecipeToMenuPlan(planId, recipe.id)
+                                            val planName = uiState.menuPlans.firstOrNull { it.id == planId }?.name
+                                            Toast.makeText(context, "Tilføjet til $planName", Toast.LENGTH_SHORT).show()
+                                        },
                                     )
                                 }
                             }
@@ -652,6 +704,7 @@ private fun RecipeEditorScreen(
     allRecipesForPicker: List<Recipe>,
     onRecipeChange: (Recipe) -> Unit,
     onSave: () -> Unit,
+    onDelete: () -> Unit,
     onDismiss: () -> Unit,
     onAddIngredientSection: () -> Unit,
     onRemoveIngredientSection: (Int) -> Unit,
@@ -962,87 +1015,24 @@ private fun RecipeEditorScreen(
                 Text("Tilføj opskrift")
             }
 
+            Spacer(modifier = Modifier.height(24.dp))
+            HorizontalDivider()
+            TextButton(
+                onClick = onDelete,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            ) {
+                Icon(Icons.Default.Delete, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Slet opskrift")
+            }
+
             Spacer(modifier = Modifier.height(32.dp))
         }
     }
 }
 
 // ── Recipe detail (read-only) ──────────────────────────────────────────────────
-
-@Suppress("FunctionNaming")
-@Composable
-private fun RecipeStepTimerInline(
-    timer: RecipeStepTimerEntry,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Icons.Filled.Timer,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = RecipeStepTimer.formatClock(timer.remainingSeconds),
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                color = if (timer.remainingSeconds < 0) {
-                    MaterialTheme.colorScheme.error
-                } else {
-                    MaterialTheme.colorScheme.onSecondaryContainer
-                },
-            )
-            Spacer(modifier = Modifier.weight(1f))
-            if (timer.remainingSeconds <= 0) {
-                IconButton(
-                    onClick = { RecipeStepTimer.clear(timer.id) },
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Stop,
-                        contentDescription = "Stop",
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            } else {
-                IconButton(
-                    onClick = {
-                        if (timer.isRunning) RecipeStepTimer.pause(timer.id)
-                        else RecipeStepTimer.resume(timer.id)
-                    },
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    Icon(
-                        imageVector = if (timer.isRunning) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                        contentDescription = if (timer.isRunning) "Pause" else "Fortsæt",
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-                IconButton(
-                    onClick = { RecipeStepTimer.clear(timer.id) },
-                    modifier = Modifier.size(36.dp),
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Fjern timer",
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
-        }
-    }
-}
 
 @Suppress("FunctionNaming", "LongMethod", "LongParameterList")
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1064,8 +1054,31 @@ private fun RecipeDetailScreen(
     onOpenLinkedRecipe: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val view = LocalView.current
+    val context = LocalContext.current
+    var keepScreenOnActive by remember { mutableStateOf(false) }
+
+    // Always clear the flag when leaving the screen
+    DisposableEffect(Unit) {
+        onDispose {
+            (view.context as? Activity)?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    // Set or clear the flag and auto-cancel after 3 minutes
+    LaunchedEffect(keepScreenOnActive) {
+        val window = (view.context as? Activity)?.window
+        if (keepScreenOnActive) {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            delay(3 * 60 * 1000L)
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            keepScreenOnActive = false
+        } else {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
     var showPlanPicker by remember { mutableStateOf(false) }
-    val allTimers by RecipeStepTimer.timers.collectAsStateWithLifecycle()
 
     if (showPlanPicker) {
         AddToPlanDialog(
@@ -1102,6 +1115,18 @@ private fun RecipeDetailScreen(
                         IconButton(onClick = { showPlanPicker = true }) {
                             Icon(Icons.Default.Add, contentDescription = "Tilføj til madplan")
                         }
+                    }
+                    IconButton(onClick = {
+                        keepScreenOnActive = !keepScreenOnActive
+                        if (keepScreenOnActive) {
+                            Toast.makeText(context, "Skærmen er tændt i 3 minutter", Toast.LENGTH_SHORT).show()
+                        }
+                    }) {
+                        Icon(
+                            imageVector = if (keepScreenOnActive) Icons.Default.LightMode else Icons.Default.Lightbulb,
+                            contentDescription = if (keepScreenOnActive) "Skærm holdes tændt" else "Hold skærm tændt i 3 minutter",
+                            tint = if (keepScreenOnActive) MaterialTheme.colorScheme.primary else LocalContentColor.current,
+                        )
                     }
                     IconButton(onClick = onEdit) {
                         Icon(Icons.Default.Edit, contentDescription = "Rediger")
@@ -1374,11 +1399,6 @@ private fun RecipeDetailScreen(
                         section.steps.forEachIndexed { idx, step ->
                             val isDone = showStepProgress &&
                                     completedSteps.any { it.sectionIndex == sIdx && it.stepIndex == idx }
-                            val stepTimer = allTimers.find {
-                                it.recipeId == recipe.id &&
-                                    it.sectionIndex == sIdx &&
-                                    it.stepIndex == idx
-                            }
                             Column(modifier = Modifier.fillMaxWidth()) {
                                 Row(
                                     modifier = Modifier
@@ -1438,19 +1458,16 @@ private fun RecipeDetailScreen(
                                     )
                                 }
                                 val stepMinutes = remember(step) { parseInstructionMinutes(step) }
-                                if (stepMinutes != null && stepTimer == null) {
+                                if (stepMinutes != null) {
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .padding(start = 36.dp, top = 4.dp, bottom = 2.dp)
                                             .clickable {
-                                                RecipeStepTimer.start(
-                                                    stepMinutes * 60,
-                                                    step,
-                                                    recipe.id,
-                                                    recipe.name,
-                                                    sIdx,
-                                                    idx,
+                                                startSystemTimer(
+                                                    context = context,
+                                                    durationSeconds = stepMinutes * 60,
+                                                    label = recipe.name,
                                                 )
                                             },
                                         verticalAlignment = Alignment.CenterVertically,
@@ -1468,13 +1485,6 @@ private fun RecipeDetailScreen(
                                             color = MaterialTheme.colorScheme.primary,
                                         )
                                     }
-                                }
-                                if (stepTimer != null) {
-                                    RecipeStepTimerInline(
-                                        timer = stepTimer,
-                                        modifier = Modifier
-                                            .padding(start = 36.dp, top = 2.dp, bottom = 4.dp),
-                                    )
                                 }
                             }
                         }
@@ -2549,94 +2559,6 @@ private fun MenuPlanCard(
 
 @Suppress("FunctionNaming")
 @Composable
-private fun RecipeTimersOnListItem(
-    timers: List<RecipeStepTimerEntry>,
-    modifier: Modifier = Modifier,
-) {
-    if (timers.isEmpty()) return
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        timers.forEach { t ->
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Timer,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    val initialMin = (t.initialTotalSeconds / 60).coerceAtLeast(1)
-                    val leftClock = RecipeStepTimer.formatClock(t.remainingSeconds)
-                    Text(
-                        text = "Timer $initialMin min. Left: $leftClock min.",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                        color = if (t.remainingSeconds < 0) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.onSecondaryContainer
-                        },
-                    )
-                    if (t.remainingSeconds <= 0) {
-                        IconButton(
-                            onClick = { RecipeStepTimer.clear(t.id) },
-                            modifier = Modifier.size(32.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Stop,
-                                contentDescription = "Stop",
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                    } else {
-                        IconButton(
-                            onClick = {
-                                if (t.isRunning) RecipeStepTimer.pause(t.id)
-                                else RecipeStepTimer.resume(t.id)
-                            },
-                            modifier = Modifier.size(32.dp),
-                        ) {
-                            Icon(
-                                imageVector = if (t.isRunning) Icons.Filled.Pause else Icons.Filled.PlayArrow,
-                                contentDescription = if (t.isRunning) "Pause" else "Fortsæt",
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                        IconButton(
-                            onClick = { RecipeStepTimer.clear(t.id) },
-                            modifier = Modifier.size(32.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Fjern timer",
-                                modifier = Modifier.size(18.dp),
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Suppress("FunctionNaming")
-@Composable
 private fun RecipeRow(
     recipe: Recipe,
     completedSteps: Int = 0,
@@ -2647,10 +2569,6 @@ private fun RecipeRow(
     onRemove: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val allTimers by RecipeStepTimer.timers.collectAsStateWithLifecycle()
-    val recipeTimers = allTimers
-        .filter { it.recipeId == recipe.id }
-        .sortedWith(compareBy({ it.sectionIndex }, { it.stepIndex }))
     Column(modifier = modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
@@ -2725,12 +2643,33 @@ private fun RecipeRow(
                 )
             }
         }
-        if (recipeTimers.isNotEmpty()) {
-            RecipeTimersOnListItem(
-                timers = recipeTimers,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
+    }
+}
+
+/**
+ * Hand off the countdown to the system clock app via the standard `ACTION_SET_TIMER` intent.
+ * Uses [AlarmClock.EXTRA_SKIP_UI] so the user stays in the recipe; falls back to a Toast if no
+ * clock app is installed.
+ */
+private fun startSystemTimer(
+    context: android.content.Context,
+    durationSeconds: Int,
+    label: String,
+) {
+    if (durationSeconds <= 0) return
+    val message = label.trim().take(60).ifBlank { "Opskrift" }
+    val intent = Intent(AlarmClock.ACTION_SET_TIMER).apply {
+        putExtra(AlarmClock.EXTRA_LENGTH, durationSeconds)
+        putExtra(AlarmClock.EXTRA_MESSAGE, message)
+        putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    try {
+        context.startActivity(intent)
+        val minutes = (durationSeconds / 60).coerceAtLeast(1)
+        Toast.makeText(context, "Timer på $minutes min. startet", Toast.LENGTH_SHORT).show()
+    } catch (_: ActivityNotFoundException) {
+        Toast.makeText(context, "Ingen ur-app fundet til timer", Toast.LENGTH_LONG).show()
     }
 }
 
@@ -2855,16 +2794,18 @@ private fun buildRecipeSubtitle(recipe: Recipe, showServings: Boolean = true): S
 }
 
 @Suppress("FunctionNaming")
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SearchRecipeRow(
     recipe: Recipe,
+    menuPlans: List<MenuPlan>,
     onClick: () -> Unit,
-    onDelete: () -> Unit,
+    onAddToPlan: (planId: String) -> Unit,
 ) {
-    val allTimers by RecipeStepTimer.timers.collectAsStateWithLifecycle()
-    val recipeTimers = allTimers
-        .filter { it.recipeId == recipe.id }
-        .sortedWith(compareBy({ it.sectionIndex }, { it.stepIndex }))
+    var showPlanMenu by remember { mutableStateOf(false) }
+    val plansWithoutRecipe = remember(menuPlans, recipe.id) {
+        menuPlans.filter { recipe.id !in it.recipeIds }
+    }
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -2876,10 +2817,14 @@ private fun SearchRecipeRow(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
+            Box(modifier = Modifier.fillMaxWidth()) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable(onClick = onClick)
+                    .combinedClickable(
+                        onClick = onClick,
+                        onLongClick = { showPlanMenu = true },
+                    )
                     .padding(horizontal = 20.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -2900,23 +2845,54 @@ private fun SearchRecipeRow(
                         )
                     }
                 }
-                IconButton(onClick = onDelete, modifier = Modifier.size(40.dp)) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "Slet ${recipe.name}",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        modifier = Modifier.size(20.dp)
+            }
+            DropdownMenu(
+                expanded = showPlanMenu,
+                onDismissRequest = { showPlanMenu = false },
+            ) {
+                if (plansWithoutRecipe.isEmpty()) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "Ingen madplaner at tilføje til",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        },
+                        onClick = { showPlanMenu = false },
+                        enabled = false,
                     )
+                } else {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                "Tilføj til madplan",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        },
+                        onClick = {},
+                        enabled = false,
+                    )
+                    plansWithoutRecipe.forEach { plan ->
+                        DropdownMenuItem(
+                            text = { Text(plan.name) },
+                            onClick = {
+                                onAddToPlan(plan.id)
+                                showPlanMenu = false
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            },
+                        )
+                    }
                 }
             }
-            if (recipeTimers.isNotEmpty()) {
-                RecipeTimersOnListItem(
-                    timers = recipeTimers,
-                    modifier = Modifier
-                        .padding(horizontal = 20.dp)
-                        .padding(bottom = 12.dp),
-                )
-            }
+            } // close Box
         }
     }
 }
@@ -2959,7 +2935,7 @@ private fun AddFab(
 
 @Suppress("FunctionNaming")
 @Composable
-private fun EmptyMenuPlansState(
+private fun EmptyRecipesState(
     isFiltered: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -2969,13 +2945,13 @@ private fun EmptyMenuPlansState(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = if (isFiltered) "Ingen opskrifter matcher søgningen" else "Ingen madplaner endnu",
+            text = if (isFiltered) "Ingen opskrifter matcher søgningen" else "Ingen opskrifter endnu",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = if (isFiltered) "Prøv en anden søgning" else "Tryk + for at oprette din første madplan",
+            text = if (isFiltered) "Prøv en anden søgning" else "Tryk + for at oprette din første opskrift",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

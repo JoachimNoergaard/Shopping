@@ -172,7 +172,12 @@ private fun ShoppingNavHost() {
         }
         composable("profile") {
             ProfileScreen(
-                onNavigateBack = { navController.popBackStack() }
+                onNavigateBack = { navController.popBackStack() },
+                onLogout = {
+                    navController.navigate("onboarding") {
+                        popUpTo(0) { inclusive = true }
+                    }
+                },
             )
         }
         composable("categories") {

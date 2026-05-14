@@ -106,6 +106,7 @@ fun GroceryListsScreen(
         val p = pendingTimerNav ?: return@LaunchedEffect
         selectedTab = 1
         ShoppingRepository.saveLastMainSection(LAST_MAIN_SECTION_COOKING)
+        cookingViewModel.syncRecipesFromServer()
         cookingViewModel.syncMenuPlansFromServer()
         when {
             p.recipeId != null -> {
@@ -128,6 +129,7 @@ fun GroceryListsScreen(
 
     LaunchedEffect(selectedTab) {
         if (selectedTab == 1) {
+            cookingViewModel.syncRecipesFromServer()
             cookingViewModel.syncMenuPlansFromServer()
         }
     }

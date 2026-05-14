@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.Notes
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Store
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -106,6 +107,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.toColorInt
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dk.joachim.shopping.R
@@ -148,6 +151,10 @@ fun GroceryListScreen(
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     val context = LocalContext.current
     BackHandler { onNavigateBack() }
+
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        viewModel.refresh()
+    }
 
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
@@ -246,11 +253,16 @@ fun GroceryListScreen(
             }
         }
     ) { paddingValues ->
+        PullToRefreshBox(
+            isRefreshing = uiState.isRefreshing,
+            onRefresh = viewModel::refresh,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues),
+        ) {
         if (items.isEmpty()) {
             EmptyState(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
+                modifier = Modifier.fillMaxSize()
             )
         } else {
             GroceryItemList(
@@ -270,9 +282,10 @@ fun GroceryListScreen(
                 onSetQuantity = viewModel::setItemQuantity,
                 onUpdateComment = viewModel::updateItemComment,
                 onUpdateCategory = viewModel::updateItemCategory,
-                contentPadding = paddingValues
+                contentPadding = PaddingValues(0.dp),
             )
         }
+        } // PullToRefreshBox
     }
 
     if (uiState.showAddItemDialog) {

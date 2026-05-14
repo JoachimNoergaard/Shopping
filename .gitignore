@@ -19,3 +19,8 @@ captures/
 # OS generated
 .DS_Store
 Thumbs.db
+
+# Server secrets — real credentials, never commit
+server/secrets.php
+# Server runtime logs
+server/error_log

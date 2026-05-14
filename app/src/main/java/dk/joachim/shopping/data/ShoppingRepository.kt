@@ -36,6 +36,7 @@ private const val KEY_PENDING_MUTATIONS = "pending_mutations"
 private const val KEY_MENU_PLANS = "menu_plans"
 private const val KEY_LAST_EXPANDED_MENU_PLAN_ID = "last_expanded_menu_plan_id"
 private const val KEY_RECIPES = "recipes"
+private const val KEY_STANDALONE_RECIPE_PROGRESS = "standalone_recipe_progress"
 // How long (ms) to suppress server sync after a local write, giving the server
 // time to process the push before we pull again.
 private const val SYNC_COOLDOWN_MS = 10_000L
@@ -109,6 +110,9 @@ object ShoppingRepository {
     private val _recipes = MutableStateFlow<List<Recipe>>(emptyList())
     val recipes: StateFlow<List<Recipe>> = _recipes.asStateFlow()
 
+    private val _standaloneRecipeProgress = MutableStateFlow<Map<String, List<CompletedStep>>>(emptyMap())
+    val standaloneRecipeProgress: StateFlow<Map<String, List<CompletedStep>>> = _standaloneRecipeProgress.asStateFlow()
+
     /** Mirrors [KEY_LAST_LIST_ID] so UI (e.g. merged menu target list) updates when the user opens another list. */
     private val _lastListId = MutableStateFlow<String?>(null)
     val lastListId: StateFlow<String?> = _lastListId.asStateFlow()
@@ -130,6 +134,7 @@ object ShoppingRepository {
         _lists.value = loadLists()
         _menuPlans.value = loadMenuPlans()
         _recipes.value = loadRecipes()
+        _standaloneRecipeProgress.value = loadStandaloneRecipeProgress()
         _lastListId.value = prefs.getString(KEY_LAST_LIST_ID, null)
     }
 
@@ -155,6 +160,30 @@ object ShoppingRepository {
 
     private fun saveMenuPlans(plans: List<MenuPlan>) {
         prefs.edit().putString(KEY_MENU_PLANS, json.encodeToString(plans)).apply()
+    }
+
+    private fun loadStandaloneRecipeProgress(): Map<String, List<CompletedStep>> {
+        val raw = prefs.getString(KEY_STANDALONE_RECIPE_PROGRESS, null) ?: return emptyMap()
+        return try { json.decodeFromString(raw) } catch (_: Exception) { emptyMap() }
+    }
+
+    private fun saveStandaloneRecipeProgress(progress: Map<String, List<CompletedStep>>) {
+        prefs.edit().putString(KEY_STANDALONE_RECIPE_PROGRESS, json.encodeToString(progress)).apply()
+    }
+
+    fun toggleStandaloneStepCompletion(recipeId: String, sectionIndex: Int, stepIndex: Int) {
+        val step = CompletedStep(sectionIndex, stepIndex)
+        val current = _standaloneRecipeProgress.value[recipeId].orEmpty().toMutableList()
+        if (current.contains(step)) current.remove(step) else current.add(step)
+        val updated = _standaloneRecipeProgress.value + (recipeId to current)
+        _standaloneRecipeProgress.value = updated
+        saveStandaloneRecipeProgress(updated)
+    }
+
+    fun clearStandaloneRecipeProgress(recipeId: String) {
+        val updated = _standaloneRecipeProgress.value - recipeId
+        _standaloneRecipeProgress.value = updated
+        saveStandaloneRecipeProgress(updated)
     }
 
     fun addMenuPlan(name: String, description: String = ""): String {
@@ -282,10 +311,7 @@ object ShoppingRepository {
     private suspend fun pushRecipeToServer(recipe: Recipe, clearRecipeImageOnServer: Boolean) {
         val payload = imagePayloadForUpsert(recipe.id, clearRecipeImageOnServer)
         val apiRecipe = RemoteDataSource.upsertRecipe(recipe, payload) ?: return
-        var merged = apiRecipe.toRecipe().withIngredientNamesFirstLetterCapitalized()
-        if (merged.linkedRecipeIds.isEmpty() && recipe.linkedRecipeIds.isNotEmpty()) {
-            merged = merged.copy(linkedRecipeIds = recipe.linkedRecipeIds)
-        }
+        val merged = apiRecipe.toRecipe().withIngredientNamesFirstLetterCapitalized()
         if (payload != null) {
             when {
                 payload.isEmpty() -> { /* cleared on server */ }
@@ -356,6 +382,7 @@ object ShoppingRepository {
         }
         _menuPlans.value = updated
         saveMenuPlans(updated)
+        clearStandaloneRecipeProgress(recipeId)
         scope.launch {
             updated.firstOrNull { it.id == planId }?.let { RemoteDataSource.upsertMenuPlan(it) }
         }
@@ -415,22 +442,10 @@ object ShoppingRepository {
     suspend fun syncRecipes() {
         val profileId = getOrCreateProfileId()
         val remote = RemoteDataSource.getRecipes(profileId) ?: return
-        val localById = _recipes.value.associateBy { it.id }
         val recipes = withContext(Dispatchers.IO) {
             val ids = remote.map { it.id }.toSet()
             RecipePhotoStorage.deleteOrphanPhotos(appContext, ids)
-            remote.map { api ->
-                val fromRemote = api.toRecipe().withIngredientNamesFirstLetterCapitalized()
-                val local = localById[fromRemote.id]
-                if (local != null &&
-                    fromRemote.linkedRecipeIds.isEmpty() &&
-                    local.linkedRecipeIds.isNotEmpty()
-                ) {
-                    fromRemote.copy(linkedRecipeIds = local.linkedRecipeIds)
-                } else {
-                    fromRemote
-                }
-            }
+            remote.map { it.toRecipe().withIngredientNamesFirstLetterCapitalized() }
         }
         _recipes.value = recipes
         saveRecipes(recipes)
@@ -547,6 +562,21 @@ object ShoppingRepository {
         prefs.edit().putBoolean(KEY_ONBOARDING_DONE, true).apply()
     }
 
+    /**
+     * Clears all local data and flags so the next launch starts fresh on the onboarding screen.
+     */
+    fun logout() {
+        prefs.edit().clear().apply()
+        _lists.value = emptyList()
+        _menuPlans.value = emptyList()
+        _recipes.value = emptyList()
+        _catalogItems.value = emptyList()
+        _shops.value = emptyList()
+        _standaloneRecipeProgress.value = emptyMap()
+        _lastListId.value = null
+        RecipePhotoStorage.deleteOrphanPhotos(appContext, emptySet())
+    }
+
     private fun adoptProfileId(newId: String) {
         prefs.edit().putString(KEY_PROFILE_ID, newId).apply()
     }
@@ -557,6 +587,10 @@ object ShoppingRepository {
      */
     suspend fun getProfileByEmail(email: String): Profile? =
         RemoteDataSource.findProfileByEmail(email.trim())
+
+    /** Asks the server to email the activation code for [email]. */
+    suspend fun requestActivationCodeEmail(email: String): RemoteDataSource.SendActivationCodeResult =
+        RemoteDataSource.requestActivationCodeEmail(email.trim())
 
     /**
      * Called when the user submits the onboarding form.
@@ -569,6 +603,7 @@ object ShoppingRepository {
         val trimmedName = name.trim()
 
         val existing = RemoteDataSource.findProfileByEmail(trimmedEmail)
+        val isExistingAccount = existing != null
         val profileId = if (existing != null) {
             adoptProfileId(existing.id)
             existing.id
@@ -582,6 +617,15 @@ object ShoppingRepository {
             Profile(id = profileId, name = trimmedName, email = trimmedEmail, activationCode = activationCode)
         )
         markOnboardingDone()
+
+        // Pull this profile's data before the UI navigates away from onboarding so
+        // the Madlavning tab shows the right recipes/menu plans immediately when
+        // the user reaches it (especially important after logging in on a new
+        // device — local cache is empty).
+        if (isExistingAccount) {
+            syncRecipes()
+            syncMenuPlans()
+        }
     }
 
     // ── Profile ────────────────────────────────────────────────────────────

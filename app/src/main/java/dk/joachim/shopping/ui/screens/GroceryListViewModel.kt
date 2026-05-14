@@ -9,7 +9,6 @@ import dk.joachim.shopping.data.GroceryList
 import dk.joachim.shopping.data.Shop
 import dk.joachim.shopping.data.ShoppingRepository
 import dk.joachim.shopping.data.UserCategory
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
@@ -31,6 +30,7 @@ data class GroceryListUiState(
     val shops: List<Shop> = emptyList(),
     val itemAddedCount: Int = 0,
     val initialSyncDone: Boolean = false,
+    val isRefreshing: Boolean = false,
 )
 
 class GroceryListViewModel(savedStateHandle: SavedStateHandle) : ViewModel() {
@@ -40,6 +40,7 @@ class GroceryListViewModel(savedStateHandle: SavedStateHandle) : ViewModel() {
 
     private val _userCategories = MutableStateFlow<List<UserCategory>>(emptyList())
     private val _initialSyncDone = MutableStateFlow(false)
+    private val _isRefreshing = MutableStateFlow(false)
 
     init {
         viewModelScope.launch {
@@ -51,10 +52,14 @@ class GroceryListViewModel(savedStateHandle: SavedStateHandle) : ViewModel() {
         viewModelScope.launch {
             repository.syncList(listId)
             _initialSyncDone.value = true
-            while (true) {
-                delay(POLL_INTERVAL_MS)
-                repository.syncList(listId)
-            }
+        }
+    }
+
+    fun refresh() {
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            repository.syncList(listId)
+            _isRefreshing.value = false
         }
     }
 
@@ -75,9 +80,9 @@ class GroceryListViewModel(savedStateHandle: SavedStateHandle) : ViewModel() {
         _dialog,
         _userCategories,
         repository.catalogItems,
-        combine(repository.shops, _initialSyncDone) { s, d -> s to d },
+        combine(repository.shops, _initialSyncDone, _isRefreshing) { s, d, r -> Triple(s, d, r) },
     ) { lists, dialog, categories, catalog, shopsAndSync ->
-        val (shops, syncDone) = shopsAndSync
+        val (shops, syncDone, refreshing) = shopsAndSync
         GroceryListUiState(
             list = lists.find { it.id == listId },
             showAddItemDialog = dialog.show,
@@ -92,6 +97,7 @@ class GroceryListViewModel(savedStateHandle: SavedStateHandle) : ViewModel() {
             shops = shops,
             itemAddedCount = dialog.itemAddedCount,
             initialSyncDone = syncDone,
+            isRefreshing = refreshing,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), GroceryListUiState())
 
@@ -146,10 +152,6 @@ class GroceryListViewModel(savedStateHandle: SavedStateHandle) : ViewModel() {
                 supermarket = null,
             )
         }
-    }
-
-    companion object {
-        private const val POLL_INTERVAL_MS = 5_000L
     }
 
     fun addItem() {
