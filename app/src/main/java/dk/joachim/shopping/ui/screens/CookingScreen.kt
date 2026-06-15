@@ -155,7 +155,7 @@ fun CookingScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val recipeCourseTypeSuggestions = remember(uiState.recipes) {
-        distinctRecipeCourseTypes(uiState.recipes)
+        recipeCourseTypeSuggestions(uiState.recipes)
     }
 
     if (uiState.editingRecipe != null) {
@@ -586,6 +586,7 @@ private val PreferredCourseTypeOrder = listOf(
     "Tilbehør",
     "Dessert",
     "Kage",
+    "Bagværk",
 )
 
 private fun distinctRecipeCourseTypes(recipes: List<Recipe>): List<String> {
@@ -601,6 +602,24 @@ private fun distinctRecipeCourseTypes(recipes: List<Recipe>): List<String> {
                 .thenBy(String.CASE_INSENSITIVE_ORDER) { it }
         )
         .toList()
+}
+
+private fun recipeCourseTypeSuggestions(recipes: List<Recipe>): List<String> {
+    val fromRecipes = distinctRecipeCourseTypes(recipes)
+    val seen = fromRecipes.mapTo(mutableSetOf()) { it.lowercase() }
+    val preferredIndex = PreferredCourseTypeOrder
+        .withIndex()
+        .associate { (idx, name) -> name.lowercase() to idx }
+    val merged = fromRecipes.toMutableList()
+    for (preferred in PreferredCourseTypeOrder) {
+        if (seen.add(preferred.lowercase())) {
+            merged += preferred
+        }
+    }
+    return merged.sortedWith(
+        compareBy<String> { preferredIndex[it.lowercase()] ?: Int.MAX_VALUE }
+            .thenBy(String.CASE_INSENSITIVE_ORDER) { it }
+    )
 }
 
 @Suppress("FunctionNaming")
