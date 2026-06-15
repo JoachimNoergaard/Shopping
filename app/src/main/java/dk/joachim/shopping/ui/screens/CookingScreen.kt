@@ -3012,7 +3012,7 @@ private fun SearchRecipeRow(
     onClick: () -> Unit,
     onAddToPlan: (planId: String) -> Unit,
 ) {
-    var showPlanMenu by remember { mutableStateOf(false) }
+    var showAddToPlanDialog by remember { mutableStateOf(false) }
     val plansWithoutRecipe = remember(menuPlans, recipe.id) {
         menuPlans.filter { recipe.id !in it.recipeIds }
     }
@@ -3026,85 +3026,127 @@ private fun SearchRecipeRow(
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        Column(modifier = Modifier.fillMaxWidth()) {
-            Box(modifier = Modifier.fillMaxWidth()) {
-            Row(
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = { showAddToPlanDialog = true },
+                )
+                .padding(start = 20.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .combinedClickable(
-                        onClick = onClick,
-                        onLongClick = { showPlanMenu = true },
-                    )
-                    .padding(horizontal = 20.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .weight(1f)
+                    .padding(vertical = 8.dp),
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = recipe.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                val subtitle = buildRecipeSubtitle(recipe)
+                if (subtitle.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = recipe.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    val subtitle = buildRecipeSubtitle(recipe)
-                    if (subtitle.isNotBlank()) {
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = subtitle,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
                 }
             }
-            DropdownMenu(
-                expanded = showPlanMenu,
-                onDismissRequest = { showPlanMenu = false },
+            IconButton(
+                onClick = { showAddToPlanDialog = true },
             ) {
-                if (plansWithoutRecipe.isEmpty()) {
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                "Ingen madplaner at tilføje til",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        },
-                        onClick = { showPlanMenu = false },
-                        enabled = false,
-                    )
-                } else {
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                "Tilføj til madplan",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        },
-                        onClick = {},
-                        enabled = false,
-                    )
-                    plansWithoutRecipe.forEach { plan ->
-                        DropdownMenuItem(
-                            text = { Text(plan.name) },
-                            onClick = {
-                                onAddToPlan(plan.id)
-                                showPlanMenu = false
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    imageVector = Icons.Default.Add,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp),
-                                )
-                            },
-                        )
-                    }
-                }
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "Tilføj ${recipe.name} til madplan",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
             }
-            } // close Box
         }
     }
+
+    if (showAddToPlanDialog) {
+        AddRecipeToMenuPlanDialog(
+            recipeName = recipe.name,
+            plans = plansWithoutRecipe,
+            onPick = { planId ->
+                onAddToPlan(planId)
+                showAddToPlanDialog = false
+            },
+            onDismiss = { showAddToPlanDialog = false },
+        )
+    }
+}
+
+@Suppress("FunctionNaming")
+@Composable
+private fun AddRecipeToMenuPlanDialog(
+    recipeName: String,
+    plans: List<MenuPlan>,
+    onPick: (planId: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Tilføj til madplan") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = recipeName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (plans.isEmpty()) {
+                    Text(
+                        text = "Ingen madplaner at tilføje til",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 280.dp),
+                    ) {
+                        items(
+                            items = plans,
+                            key = { it.id },
+                        ) { plan ->
+                            TextButton(
+                                onClick = { onPick(plan.id) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Add,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = plan.name,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Luk") }
+        },
+    )
 }
 
 @Suppress("FunctionNaming")
