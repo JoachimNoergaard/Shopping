@@ -27,16 +27,25 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Extracts the first "N min." / "N min" duration from a step line (case-insensitive). */
+/** Extracts minutes from step text: "5 min.", "5 minutter", or "5-7 minutter" (range → midpoint). */
 fun parseInstructionMinutes(text: String): Int? {
-    val regex = Regex("""(\d+)\s*min\.?\b""", RegexOption.IGNORE_CASE)
-    val match = regex.find(text) ?: return null
-    val n = match.groupValues[1].toIntOrNull() ?: return null
-    return when {
-        n < 1 -> null
-        n > 24 * 60 -> null
-        else -> n
+    val unit = """min(?:utter)?\.?\b"""
+    val rangeRegex = Regex("""(\d+)\s*[-–]\s*(\d+)\s*$unit""", RegexOption.IGNORE_CASE)
+    rangeRegex.find(text)?.let { match ->
+        val low = match.groupValues[1].toIntOrNull() ?: return@let
+        val high = match.groupValues[2].toIntOrNull() ?: return@let
+        return validateMinutes((kotlin.math.min(low, high) + kotlin.math.max(low, high)) / 2)
     }
+    val singleRegex = Regex("""(\d+)\s*$unit""", RegexOption.IGNORE_CASE)
+    val match = singleRegex.find(text) ?: return null
+    val n = match.groupValues[1].toIntOrNull() ?: return null
+    return validateMinutes(n)
+}
+
+private fun validateMinutes(n: Int): Int? = when {
+    n < 1 -> null
+    n > 24 * 60 -> null
+    else -> n
 }
 
 data class RecipeStepTimerEntry(
