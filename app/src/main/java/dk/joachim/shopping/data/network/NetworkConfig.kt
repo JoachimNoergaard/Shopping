@@ -8,4 +8,11 @@ object NetworkConfig {
      *   Production server                : "https://yourserver.com/shopping/api/"
      */
     const val BASE_URL = "https://joachim.dk/shopping/"
+
+    /** Browser UI for creating and editing recipes (syncs with the app). */
+    const val RECIPE_WEB_PORTAL_URL = BASE_URL + "web/"
+
+    /** Public read-only recipe page (no login required). */
+    fun recipeWebViewUrl(recipeId: String): String =
+        RECIPE_WEB_PORTAL_URL + "recipe.php?id=" + recipeId
 }

@@ -137,6 +137,7 @@ import dk.joachim.shopping.data.Ingredient
 import dk.joachim.shopping.data.MenuPlan
 import dk.joachim.shopping.data.RecipePhotoStorage
 import dk.joachim.shopping.data.Recipe
+import dk.joachim.shopping.data.network.NetworkConfig
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import dk.joachim.shopping.data.capitalizeIngredientFirstLetter
@@ -1049,6 +1050,12 @@ private fun RecipeEditorScreen(
 
             Spacer(modifier = Modifier.height(24.dp))
             HorizontalDivider()
+            LinkedText(
+                text = "Du kan også oprette og redigere opskrifter i browseren på ${NetworkConfig.RECIPE_WEB_PORTAL_URL}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(modifier = Modifier.height(12.dp))
             TextButton(
                 onClick = onDelete,
                 modifier = Modifier.fillMaxWidth(),
@@ -2920,71 +2927,8 @@ private fun buildRecipeSubtitle(recipe: Recipe, showServings: Boolean = true): S
     return parts.joinToString(" · ")
 }
 
-private fun buildRecipeShareText(recipe: Recipe): String = buildString {
-    appendLine(recipe.name)
-    appendLine("=".repeat(recipe.name.length.coerceAtLeast(3)))
-
-    val metaParts = mutableListOf<String>()
-    if (recipe.courseType.isNotBlank()) metaParts += recipe.courseType
-    if (recipe.servings > 0) metaParts += "${recipe.servings} pers."
-    if (recipe.prepTimeMinutes > 0) metaParts += "Tilberedningstid: ${recipe.prepTimeMinutes} min"
-    if (recipe.totalTimeMinutes > 0) metaParts += "Samlet tid: ${recipe.totalTimeMinutes} min"
-    if (metaParts.isNotEmpty()) {
-        appendLine(metaParts.joinToString(" · "))
-    }
-    if (recipe.durability.isNotBlank()) {
-        appendLine("Holdbarhed: ${recipe.durability}")
-    }
-
-    if (recipe.description.isNotBlank()) {
-        appendLine()
-        appendLine(recipe.description.trim())
-    }
-
-    val ingredientSections = recipe.ingredientSections.filter { it.ingredients.isNotEmpty() }
-    if (ingredientSections.isNotEmpty()) {
-        appendLine()
-        appendLine("INGREDIENSER")
-        ingredientSections.forEach { section ->
-            if (section.title.isNotBlank() && ingredientSections.size > 1) {
-                appendLine()
-                appendLine("${section.title}:")
-            }
-            section.ingredients.forEach { ing ->
-                val qty = listOf(ing.quantity.trim(), ing.unit.trim())
-                    .filter { it.isNotBlank() }
-                    .joinToString(" ")
-                val name = ing.name.capitalizeIngredientFirstLetter()
-                val line = if (qty.isNotBlank()) "- $qty $name" else "- $name"
-                appendLine(line)
-            }
-        }
-    }
-
-    val instructionSections = recipe.instructionSections.filter { it.steps.isNotEmpty() }
-    if (instructionSections.isNotEmpty()) {
-        appendLine()
-        appendLine("FREMGANGSMÅDE")
-        instructionSections.forEach { section ->
-            if (section.title.isNotBlank() && instructionSections.size > 1) {
-                appendLine()
-                appendLine("${section.title}:")
-            }
-            section.steps.forEachIndexed { idx, step ->
-                appendLine("${idx + 1}. ${step.trim()}")
-            }
-        }
-    }
-
-    if (recipe.tips.isNotBlank()) {
-        appendLine()
-        appendLine("TIPS")
-        appendLine(recipe.tips.trim())
-    }
-
-    appendLine()
-    appendLine("Delt med glæde fra ShoppingShark appen 🫶")
-}.trimEnd()
+private fun buildRecipeShareText(recipe: Recipe): String =
+    "${recipe.name}\n${NetworkConfig.recipeWebViewUrl(recipe.id)}"
 
 private fun shareRecipe(context: android.content.Context, recipe: Recipe) {
     val text = buildRecipeShareText(recipe)

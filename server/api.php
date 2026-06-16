@@ -25,31 +25,29 @@
  * DELETE /profile/{profileId}/menu-plans/{id}       Delete a menu plan
  */
 
-// ── Database config — fill these in ───────────────────────────────────────
-// DB_PASS lives in secrets.php (loaded below).
-define('DB_HOST', 'localhost');
-define('DB_NAME', 'joachimd_shopping');
-define('DB_USER', 'joachimd_shopping');
+require_once __DIR__ . '/common.php';
 
-// ── Mail config ───────────────────────────────────────────────────────────
-// Sender identity (visible to recipients):
-define('MAIL_FROM_ADDRESS', 'noreply@joachim.dk');
-define('MAIL_FROM_NAME',    'ShoppingShark');
-define('MAIL_REPLY_TO',     'joachim@joachim.dk');
-// SMTP transport via nordicway.dk. Their docs use mail.<yourdomain> on port 465
-// with SSL; username is the full email address, password is the mailbox
-// password set in nordicway's control panel. Make sure the mailbox for
-// noreply@joachim.dk exists in nordicway before sending.
-// Leave MAIL_SMTP_HOST empty to fall back to PHP mail().
-define('MAIL_SMTP_HOST',     'mail.joachim.dk');
-define('MAIL_SMTP_PORT',     465);
-define('MAIL_SMTP_USER',     'noreply@joachim.dk');
-define('MAIL_SMTP_SECURE',   'ssl'); // 'tls' (port 587), 'ssl' (port 465), or '' to disable encryption
+// Parse path once — used for web portal dispatch and API routing.
+$scriptDir = rtrim(dirname($_SERVER['SCRIPT_NAME'] ?? ''), '/');
+$uri       = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+$path      = ltrim(substr($uri, strlen($scriptDir)), '/');
+$segments  = array_values(array_filter(explode('/', $path)));
 
-// Secrets (mailbox password, etc.) live in secrets.php, which is git-ignored.
-// See secrets.example.php for the expected shape. The file is required so we
-// fail fast in development if it's missing.
-require_once __DIR__ . '/secrets.php';
+// When .htaccess rewrites /web/ to api.php, serve the HTML portal from here.
+if (!empty($segments) && $segments[0] === 'web') {
+    $webRel = implode('/', array_slice($segments, 1));
+    if ($webRel === '' || $webRel === 'index.php') {
+        $webFile = __DIR__ . '/web/index.php';
+    } else {
+        $webFile = __DIR__ . '/web/' . $webRel;
+    }
+    $realWeb = realpath($webFile);
+    $webRoot = realpath(__DIR__ . '/web');
+    if ($realWeb !== false && $webRoot !== false && strpos($realWeb, $webRoot) === 0 && is_file($realWeb)) {
+        require $realWeb;
+        exit;
+    }
+}
 
 // ── Headers ────────────────────────────────────────────────────────────────
 header('Content-Type: application/json; charset=utf-8');
@@ -95,425 +93,9 @@ set_exception_handler(function (\Throwable $e) {
     ], JSON_UNESCAPED_UNICODE);
 });
 
-// ── Database connection ────────────────────────────────────────────────────
-$db = new PDO(
-    'mysql:host=' . DB_HOST . ';dbname=' . DB_NAME . ';charset=utf8mb4',
-    DB_USER,
-    DB_PASS,
-    [
-        PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES   => false,
-    ]
-);
-
-// ── Schema (auto-created on first request) ─────────────────────────────────
-$db->exec('CREATE TABLE IF NOT EXISTS lists (
-    id         VARCHAR(36)  NOT NULL,
-    name       VARCHAR(255) NOT NULL,
-    owner_id   VARCHAR(36)  NOT NULL DEFAULT \'\',
-    created_at BIGINT       NOT NULL,
-    updated_at BIGINT       NOT NULL,
-    PRIMARY KEY (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-
-$db->exec('CREATE TABLE IF NOT EXISTS items (
-    id          VARCHAR(36)  NOT NULL,
-    list_id     VARCHAR(36)  NOT NULL,
-    name        VARCHAR(255) NOT NULL,
-    quantity    VARCHAR(100) NOT NULL,
-    category    VARCHAR(50)  NOT NULL,
-    is_checked  TINYINT(1)   NOT NULL DEFAULT 0,
-    checked_at  BIGINT,
-    weekday     VARCHAR(10),
-    price       VARCHAR(100),
-    supermarket VARCHAR(100),
-    comment     TEXT,
-    updated_at  BIGINT       NOT NULL,
-    PRIMARY KEY (id),
-    FOREIGN KEY (list_id) REFERENCES lists(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-
-$db->exec('CREATE TABLE IF NOT EXISTS categories (
-    id          VARCHAR(36)  NOT NULL,
-    profile_id  VARCHAR(36)  NOT NULL,
-    name        VARCHAR(255) NOT NULL,
-    order_index INT          NOT NULL DEFAULT 0,
-    updated_at  BIGINT       NOT NULL,
-    PRIMARY KEY (id),
-    INDEX idx_profile (profile_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-
-$db->exec('CREATE TABLE IF NOT EXISTS profiles (
-    id              VARCHAR(36)  NOT NULL,
-    name            VARCHAR(255) NOT NULL DEFAULT \'\',
-    email           VARCHAR(255) NOT NULL DEFAULT \'\',
-    activation_code VARCHAR(10)  NOT NULL DEFAULT \'\',
-    updated_at      BIGINT       NOT NULL,
-    PRIMARY KEY (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-// Migration: add email column for databases created before it was introduced
-
-$db->exec('CREATE TABLE IF NOT EXISTS shops (
-    id               VARCHAR(36)  NOT NULL,
-    profile_id       VARCHAR(36)  NOT NULL,
-    name             VARCHAR(255) NOT NULL,
-    background_color VARCHAR(10)  NOT NULL DEFAULT \'#42A5F5\',
-    foreground_color VARCHAR(10)  NOT NULL DEFAULT \'#FFFFFF\',
-    order_index      INT          NOT NULL DEFAULT 0,
-    updated_at       BIGINT       NOT NULL,
-    PRIMARY KEY (id),
-    INDEX idx_shops_profile (profile_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-
-$db->exec('CREATE TABLE IF NOT EXISTS catalog_items (
-    id         VARCHAR(36)  NOT NULL,
-    profile_id VARCHAR(36)  NOT NULL,
-    name       VARCHAR(255) NOT NULL,
-    category   VARCHAR(50)  NOT NULL DEFAULT \'\',
-    updated_at BIGINT       NOT NULL,
-    PRIMARY KEY (id),
-    INDEX idx_catalog_profile (profile_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-
-$db->exec('CREATE TABLE IF NOT EXISTS list_members (
-    list_id    VARCHAR(36) NOT NULL,
-    profile_id VARCHAR(36) NOT NULL,
-    joined_at  BIGINT      NOT NULL,
-    PRIMARY KEY (list_id, profile_id),
-    FOREIGN KEY (list_id) REFERENCES lists(id) ON DELETE CASCADE,
-    INDEX idx_list_members_profile (profile_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-
-$db->exec('CREATE TABLE IF NOT EXISTS recipes (
-    id                   VARCHAR(36)  NOT NULL,
-    profile_id           VARCHAR(36)  NOT NULL,
-    name                 VARCHAR(255) NOT NULL,
-    description          TEXT         NOT NULL,
-    rating               INT          NOT NULL DEFAULT 0,
-    servings             INT          NOT NULL DEFAULT 0,
-    nutrition_facts      TEXT         NOT NULL,
-    prep_time_minutes    INT          NOT NULL DEFAULT 0,
-    total_time_minutes   INT          NOT NULL DEFAULT 0,
-    durability           VARCHAR(255) NOT NULL DEFAULT \'\',
-    course_type          VARCHAR(100) NOT NULL DEFAULT \'\',
-    ingredient_sections  TEXT         NOT NULL,
-    instruction_sections TEXT         NOT NULL,
-    tips                 TEXT         NOT NULL,
-    image_url            VARCHAR(768) NULL,
-    linked_recipe_ids    TEXT         NOT NULL DEFAULT \'[]\',
-    created_at           BIGINT       NOT NULL,
-    updated_at           BIGINT       NOT NULL,
-    PRIMARY KEY (id),
-    INDEX idx_recipes_profile (profile_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-
-
-// ── Recipe images (files on disk) ─────────────────────────────────────────
-define('RECIPE_IMAGES_SUBDIR', 'recipe_images');
-
-function recipe_images_fs_dir(): string
-{
-    return __DIR__ . '/' . RECIPE_IMAGES_SUBDIR;
-}
-
-function ensure_recipe_images_dir(): void
-{
-    $d = recipe_images_fs_dir();
-    if (!is_dir($d)) {
-        mkdir($d, 0755, true);
-    }
-}
-
-/** Web path prefix containing api.php (e.g. /shopping). */
-function public_api_dir_url_prefix(): string
-{
-    $dir = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/')), '/');
-    if ($dir === '' || $dir === '/') {
-        return '';
-    }
-    return $dir;
-}
-
-function absolute_recipe_image_url(?string $relativePath): ?string
-{
-    if ($relativePath === null || $relativePath === '') {
-        return null;
-    }
-    if (preg_match('#^https?://#i', $relativePath)) {
-        return $relativePath;
-    }
-    $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
-        || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
-    $proto = $https ? 'https' : 'http';
-    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-    $base = public_api_dir_url_prefix();
-
-    return $proto . '://' . $host . $base . '/' . ltrim(str_replace('\\', '/', $relativePath), '/');
-}
-
-/** Delete stored file for a recipe if it exists; clear DB column optional (caller updates row). */
-function delete_recipe_image_file(PDO $db, string $recipeId, string $profileId): void
-{
-    $stmt = $db->prepare('SELECT image_url FROM recipes WHERE id = ? AND profile_id = ?');
-    $stmt->execute([$recipeId, $profileId]);
-    $row = $stmt->fetch();
-    if (!$row || empty($row['image_url'])) {
-        return;
-    }
-    $rel = $row['image_url'];
-    if (preg_match('#^https?://#i', $rel)) {
-        return;
-    }
-    $full = __DIR__ . '/' . ltrim(str_replace('\\', '/', $rel), '/');
-    if (is_file($full)) {
-        @unlink($full);
-    }
-}
-
-function migrate_legacy_recipe_blobs_to_files(PDO $db): void
-{
-    try {
-        $stmt = $db->query('SELECT id, image_jpeg FROM recipes WHERE image_jpeg IS NOT NULL AND LENGTH(image_jpeg) > 0');
-        $rows = $stmt ? $stmt->fetchAll() : [];
-    } catch (PDOException $e) {
-        return;
-    }
-    ensure_recipe_images_dir();
-    foreach ($rows as $r) {
-        $id = $r['id'];
-        $rel = RECIPE_IMAGES_SUBDIR . '/' . $id . '.jpg';
-        $full = __DIR__ . '/' . $rel;
-        if (@file_put_contents($full, $r['image_jpeg']) !== false) {
-            $db->prepare('UPDATE recipes SET image_url = ?, image_jpeg = NULL WHERE id = ?')->execute([$rel, $id]);
-        }
-    }    
-}
-
-ensure_recipe_images_dir();
-migrate_legacy_recipe_blobs_to_files($db);
-
-$db->exec('CREATE TABLE IF NOT EXISTS menu_plans (
-    id          VARCHAR(36)  NOT NULL,
-    profile_id  VARCHAR(36)  NOT NULL,
-    name        VARCHAR(255) NOT NULL,
-    description TEXT         NOT NULL,
-    servings    INT          NOT NULL DEFAULT 0,
-    created_at  BIGINT       NOT NULL,
-    updated_at  BIGINT       NOT NULL,
-    PRIMARY KEY (id),
-    INDEX idx_menu_plans_profile (profile_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-
-$db->exec('CREATE TABLE IF NOT EXISTS menu_plan_recipes (
-    menu_plan_id VARCHAR(36) NOT NULL,
-    recipe_id    VARCHAR(36) NOT NULL,
-    sort_order   INT         NOT NULL DEFAULT 0,
-    PRIMARY KEY (menu_plan_id, recipe_id),
-    FOREIGN KEY (menu_plan_id) REFERENCES menu_plans(id) ON DELETE CASCADE,
-    FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-function nowMs(): int
-{
-    return (int) (microtime(true) * 1000);
-}
-
-function rowToItem(array $row): array
-{
-    return [
-        'id'          => $row['id'],
-        'name'        => $row['name'],
-        'quantity'    => $row['quantity'],
-        'category'    => $row['category'],
-        'isChecked'   => (bool) $row['is_checked'],
-        'checkedAt'   => isset($row['checked_at']) ? (int) $row['checked_at'] : null,
-        'weekday'     => $row['weekday'],
-        'price'       => $row['price'],
-        'supermarket' => $row['supermarket'],
-        'comment'     => $row['comment'] ?? null,
-    ];
-}
-
-function listWithItems(PDO $db, array $list): array
-{
-    $stmt = $db->prepare('SELECT * FROM items WHERE list_id = ? ORDER BY updated_at ASC, id ASC');
-    $stmt->execute([$list['id']]);
-    return [
-        'id'        => $list['id'],
-        'name'      => $list['name'],
-        'ownerId'   => $list['owner_id'] ?? '',
-        'createdAt' => (int) $list['created_at'],
-        'items'     => array_map('rowToItem', $stmt->fetchAll()),
-    ];
-}
-
-function json_out(mixed $data, int $status = 200): never
-{
-    http_response_code($status);
-    echo json_encode($data, JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
-function not_found(): never
-{
-    json_out(['error' => 'Not found'], 404);
-}
-
-/**
- * Sends the activation code to [$toEmail] using PHPMailer (manual-install drop in
- * /server/phpmailer/).
- *
- * Uses SMTP when MAIL_SMTP_HOST is configured; otherwise falls back to PHPMailer's
- * isMail() transport, which still wraps the message in proper MIME headers/Message-Id
- * (much better deliverability than raw mail()).
- *
- * @return bool|string True on success, or a short error message on failure.
- */
-function send_activation_code_email(string $toEmail, string $toName, string $code): bool|string
-{
-    $base = __DIR__ . '/phpmailer';
-    require_once $base . '/Exception.php';
-    require_once $base . '/PHPMailer.php';
-    require_once $base . '/SMTP.php';
-
-    $mailer = new \PHPMailer\PHPMailer\PHPMailer(true);
-    try {
-        if (MAIL_SMTP_HOST !== '') {
-            $mailer->isSMTP();
-            $mailer->Host       = MAIL_SMTP_HOST;
-            $mailer->Port       = (int) MAIL_SMTP_PORT;
-            $mailer->SMTPAuth   = MAIL_SMTP_USER !== '';
-            if ($mailer->SMTPAuth) {
-                $mailer->Username = MAIL_SMTP_USER;
-                $mailer->Password = MAIL_SMTP_PASS;
-            }
-            if (MAIL_SMTP_SECURE !== '') {
-                $mailer->SMTPSecure = MAIL_SMTP_SECURE;
-            }
-        } else {
-            $mailer->isMail();
-            // Many shared hosts reject sendmail with the -f envelope-sender flag,
-            // which PHPMailer passes by default. Disabling this is the single
-            // most common fix when mail() unexpectedly returns false.
-            $mailer->UseSendmailOptions = false;
-        }
-
-        $mailer->CharSet  = 'UTF-8';
-        $mailer->Encoding = '8bit';
-
-        $mailer->setFrom(MAIL_FROM_ADDRESS, MAIL_FROM_NAME);
-        if (MAIL_REPLY_TO !== '') {
-            $mailer->addReplyTo(MAIL_REPLY_TO);
-        }
-        $mailer->addAddress($toEmail, $toName);
-
-        $greetingName = $toName !== '' ? $toName : 'der';
-        $mailer->Subject = 'Din aktiveringskode til ShoppingShark';
-        $mailer->isHTML(false);
-        $mailer->Body =
-            "Hej $greetingName,\r\n\r\n" .
-            "Din aktiveringskode til ShoppingShark er:\r\n\r\n" .
-            "    $code\r\n\r\n" .
-            "Indtast koden i appen for at logge ind på din konto.\r\n\r\n" .
-            "Hvis du ikke har bedt om denne kode, kan du roligt ignorere mailen.\r\n\r\n" .
-            "Venlig hilsen,\r\nShoppingShark";
-
-        $mailer->send();
-        return true;
-    } catch (\PHPMailer\PHPMailer\Exception $e) {
-        return $mailer->ErrorInfo !== '' ? $mailer->ErrorInfo : $e->getMessage();
-    } catch (\Throwable $e) {
-        return $e->getMessage();
-    }
-}
-
-function menuPlanToJson(PDO $db, array $row): array
-{
-    $stmt = $db->prepare('SELECT recipe_id FROM menu_plan_recipes WHERE menu_plan_id = ? ORDER BY sort_order ASC');
-    $stmt->execute([$row['id']]);
-    $progress = json_decode($row['recipe_progress'] ?? '{}', true) ?: [];
-    $recipeServings = json_decode($row['recipe_servings'] ?? '{}', true) ?: [];
-    return [
-        'id'             => $row['id'],
-        'profileId'      => $row['profile_id'],
-        'name'           => $row['name'],
-        'description'    => $row['description'] ?? '',
-        'servings'       => (int) ($row['servings'] ?? 0),
-        'recipeIds'      => $stmt->fetchAll(PDO::FETCH_COLUMN),
-        'recipeProgress' => (object) $progress,
-        'recipeServings' => (object) $recipeServings,
-        'createdAt'      => (int) $row['created_at'],
-    ];
-}
-
-/**
- * Drop any list entries that aren't JSON objects (associative arrays).
- * Some legacy rows stored stray "[]" placeholders inside ingredient_sections /
- * instruction_sections, which would otherwise break the strict client-side
- * decoder (expects {title, steps|ingredients}, not a bare array).
- */
-function sanitize_section_list($value): array
-{
-    if (!is_array($value)) return [];
-    $out = [];
-    foreach ($value as $entry) {
-        // PHP json_decode($, true) gives associative arrays for JSON objects
-        // and sequential arrays for JSON arrays. Keep only associative ones.
-        if (is_array($entry) && (count($entry) === 0
-                ? false                                  // strip empty []
-                : array_keys($entry) !== range(0, count($entry) - 1))
-        ) {
-            $out[] = $entry;
-        }
-    }
-    return $out;
-}
-
-function recipeToJson(array $row): array
-{
-    $ingredientSections  = sanitize_section_list(
-        json_decode($row['ingredient_sections'] ?? '[]', true)
-    );
-    $instructionSections = sanitize_section_list(
-        json_decode($row['instruction_sections'] ?? '[]', true)
-    );
-
-    $out = [
-        'id'                  => $row['id'],
-        'profileId'           => $row['profile_id'],
-        'name'                => $row['name'],
-        'description'         => $row['description'] ?? '',
-        'rating'              => (int) ($row['rating'] ?? 0),
-        'servings'            => (int) ($row['servings'] ?? 0),
-        'nutritionFacts'      => $row['nutrition_facts'] ?? '',
-        'prepTimeMinutes'     => (int) ($row['prep_time_minutes'] ?? 0),
-        'totalTimeMinutes'    => (int) ($row['total_time_minutes'] ?? 0),
-        'durability'          => $row['durability'] ?? '',
-        'courseType'           => $row['course_type'] ?? '',
-        'ingredientSections'  => $ingredientSections,
-        'instructionSections' => $instructionSections,
-        'tips'                => $row['tips'] ?? '',
-        'createdAt'           => (int) $row['created_at'],
-        'linkedRecipeIds'     => json_decode($row['linked_recipe_ids'] ?? '[]', true) ?: [],
-    ];
-    $abs = absolute_recipe_image_url($row['image_url'] ?? null);
-    if ($abs !== null && $abs !== '') {
-        $out['imageUrl'] = $abs;
-    }
-    return $out;
-}
-
 // ── Router ─────────────────────────────────────────────────────────────────
 
 $method = $_SERVER['REQUEST_METHOD'];
-
-$scriptDir = rtrim(dirname($_SERVER['SCRIPT_NAME']), '/');
-$uri       = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-$path      = ltrim(substr($uri, strlen($scriptDir)), '/');
-$segments  = array_values(array_filter(explode('/', $path)));
 
 $body = json_decode(file_get_contents('php://input'), true) ?? [];
 
@@ -838,16 +420,8 @@ if ($method === 'POST' && count($segments) === 3 && $segments[0] === 'profile' &
     $email = trim($body['email'] ?? '');
     if ($email === '') json_out(['error' => 'Missing email'], 400);
 
-    $stmt = $db->prepare('SELECT activation_code, name FROM profiles WHERE email = ? LIMIT 1');
-    $stmt->execute([$email]);
-    $row = $stmt->fetch();
-    if (!$row) not_found();
-
-    $code = (string) $row['activation_code'];
-    if ($code === '') json_out(['error' => 'Profile has no activation code'], 500);
-
-    $displayName = trim((string) $row['name']);
-    $result = send_activation_code_email($email, $displayName, $code);
+    $result = send_login_code_for_email($db, $email);
+    if ($result === 'not_found') not_found();
     if ($result !== true) {
         json_out(['error' => 'Failed to send email', 'detail' => $result], 500);
     }
@@ -891,75 +465,19 @@ if ($method === 'GET' && count($segments) === 3 && $segments[0] === 'profile' &&
 // ── PUT /profile/{profileId}/recipes/{id} ─────────────────────────────────
 if ($method === 'PUT' && count($segments) === 4 && $segments[0] === 'profile' && $segments[2] === 'recipes') {
     [, $profileId, , $id] = $segments;
-    $now = nowMs();
-    $db->prepare('
-        INSERT INTO recipes (id, profile_id, name, description, rating, servings, nutrition_facts,
-            prep_time_minutes, total_time_minutes, durability, course_type,
-            ingredient_sections, instruction_sections, tips, linked_recipe_ids, created_at, updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        ON DUPLICATE KEY UPDATE
-            name                 = VALUES(name),
-            description          = VALUES(description),
-            rating               = VALUES(rating),
-            servings             = VALUES(servings),
-            nutrition_facts      = VALUES(nutrition_facts),
-            prep_time_minutes    = VALUES(prep_time_minutes),
-            total_time_minutes   = VALUES(total_time_minutes),
-            durability           = VALUES(durability),
-            course_type          = VALUES(course_type),
-            ingredient_sections  = VALUES(ingredient_sections),
-            instruction_sections = VALUES(instruction_sections),
-            tips                 = VALUES(tips),
-            linked_recipe_ids    = VALUES(linked_recipe_ids),
-            updated_at           = VALUES(updated_at)
-    ')->execute([
-        $id,
-        $profileId,
-        $body['name'] ?? '',
-        $body['description'] ?? '',
-        (int) ($body['rating'] ?? 0),
-        (int) ($body['servings'] ?? 0),
-        $body['nutritionFacts'] ?? '',
-        (int) ($body['prepTimeMinutes'] ?? 0),
-        (int) ($body['totalTimeMinutes'] ?? 0),
-        $body['durability'] ?? '',
-        $body['courseType'] ?? '',
-        json_encode($body['ingredientSections'] ?? [], JSON_UNESCAPED_UNICODE),
-        json_encode($body['instructionSections'] ?? [], JSON_UNESCAPED_UNICODE),
-        $body['tips'] ?? '',
-        json_encode($body['linkedRecipeIds'] ?? [], JSON_UNESCAPED_UNICODE),
-        $body['createdAt'] ?? $now,
-        $now,
-    ]);
-    if (array_key_exists('imageBase64', $body)) {
-        ensure_recipe_images_dir();
-        $raw = $body['imageBase64'];
-        if ($raw === null || $raw === '') {
-            delete_recipe_image_file($db, $id, $profileId);
-            $db->prepare('UPDATE recipes SET image_url = NULL WHERE id = ? AND profile_id = ?')->execute([$id, $profileId]);
-        } else {
-            $bin = base64_decode((string) $raw, true);
-            if ($bin === false) {
-                json_out(['error' => 'invalid imageBase64'], 400);
-            }
-            $rel = RECIPE_IMAGES_SUBDIR . '/' . $id . '.jpg';
-            $full = __DIR__ . '/' . $rel;
-            if (file_put_contents($full, $bin) === false) {
-                json_out(['error' => 'failed to store recipe image'], 500);
-            }
-            $db->prepare('UPDATE recipes SET image_url = ? WHERE id = ? AND profile_id = ?')->execute([$rel, $id, $profileId]);
-        }
+    try {
+        json_out(upsert_recipe($db, $profileId, $id, $body));
+    } catch (InvalidArgumentException $e) {
+        json_out(['error' => $e->getMessage()], 400);
+    } catch (RuntimeException $e) {
+        json_out(['error' => $e->getMessage()], 500);
     }
-    $stmt = $db->prepare('SELECT * FROM recipes WHERE id = ?');
-    $stmt->execute([$id]);
-    json_out(recipeToJson($stmt->fetch()));
 }
 
 // ── DELETE /profile/{profileId}/recipes/{id} ──────────────────────────────
 if ($method === 'DELETE' && count($segments) === 4 && $segments[0] === 'profile' && $segments[2] === 'recipes') {
     [, $profileId, , $id] = $segments;
-    delete_recipe_image_file($db, $id, $profileId);
-    $db->prepare('DELETE FROM recipes WHERE id = ? AND profile_id = ?')->execute([$id, $profileId]);
+    delete_recipe($db, $profileId, $id);
     http_response_code(204);
     exit;
 }
