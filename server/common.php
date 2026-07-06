@@ -132,6 +132,38 @@ $db->exec('CREATE TABLE IF NOT EXISTS recipes (
     INDEX idx_recipes_profile (profile_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
 
+$db->exec('CREATE TABLE IF NOT EXISTS web_login_requests (
+    id           VARCHAR(36)  NOT NULL,
+    email        VARCHAR(255) NOT NULL,
+    token_hash   CHAR(64)     NOT NULL,
+    next_url     VARCHAR(255) NOT NULL DEFAULT \'recipes.php\',
+    remember_device TINYINT(1) NOT NULL DEFAULT 0,
+    completed_at BIGINT       NULL,
+    expires_at   BIGINT       NOT NULL,
+    created_at   BIGINT       NOT NULL,
+    PRIMARY KEY (id),
+    INDEX idx_web_login_token (token_hash),
+    INDEX idx_web_login_email (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+
+try {
+    $db->exec('ALTER TABLE web_login_requests ADD COLUMN remember_device TINYINT(1) NOT NULL DEFAULT 0');
+} catch (PDOException $e) {
+    // Column already exists.
+}
+
+$db->exec('CREATE TABLE IF NOT EXISTS web_device_tokens (
+    id           VARCHAR(36)  NOT NULL,
+    profile_id   VARCHAR(36)  NOT NULL,
+    token_hash   CHAR(64)     NOT NULL,
+    expires_at   BIGINT       NOT NULL,
+    created_at   BIGINT       NOT NULL,
+    last_used_at BIGINT       NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE INDEX idx_web_device_token_hash (token_hash),
+    INDEX idx_web_device_profile (profile_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+
 define('RECIPE_IMAGES_SUBDIR', 'recipe_images');
 
 function recipe_images_fs_dir(): string
@@ -159,6 +191,21 @@ function public_api_dir_url_prefix(): string
         return '';
     }
     return $dir;
+}
+
+/** Absolute base URL for the recipe web portal (trailing slash). */
+function web_portal_base_url(): string
+{
+    if (defined('WEB_PORTAL_BASE_URL') && WEB_PORTAL_BASE_URL !== '') {
+        return rtrim(WEB_PORTAL_BASE_URL, '/') . '/';
+    }
+    $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+        || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+    $proto = $https ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    $prefix = public_api_dir_url_prefix();
+
+    return $proto . '://' . $host . $prefix . '/web/';
 }
 
 function absolute_recipe_image_url(?string $relativePath): ?string
@@ -568,4 +615,354 @@ function send_login_code_for_email(PDO $db, string $email): bool|string
         return 'Profile has no activation code';
     }
     return send_activation_code_email($email, trim((string) $row['name']), $code);
+}
+
+function new_web_login_token(): string
+{
+    return bin2hex(random_bytes(32));
+}
+
+function hash_web_login_token(string $token): string
+{
+    return hash('sha256', $token);
+}
+
+function web_login_next_url(?string $next): string
+{
+    if ($next === null || $next === '') {
+        return 'recipes.php';
+    }
+    if (preg_match('#^https?://#i', $next) || str_contains($next, '..') || str_contains($next, "\0")) {
+        return 'recipes.php';
+    }
+    return ltrim($next, '/');
+}
+
+/**
+ * @return array{request_id:string,token:string,name:string}|string
+ */
+function create_web_login_request(PDO $db, string $email, ?string $next = null, bool $rememberDevice = false): array|string
+{
+    $email = trim($email);
+    if ($email === '') {
+        return 'Missing email';
+    }
+
+    $stmt = $db->prepare('SELECT id, name FROM profiles WHERE email = ? LIMIT 1');
+    $stmt->execute([$email]);
+    $profile = $stmt->fetch();
+    if (!$profile) {
+        return 'not_found';
+    }
+
+    $now = time();
+    $requestId = newId();
+    $token = new_web_login_token();
+    $expiresAt = $now + 900;
+
+    $db->prepare('DELETE FROM web_login_requests WHERE email = ? AND completed_at IS NULL')->execute([$email]);
+
+    $db->prepare('
+        INSERT INTO web_login_requests (id, email, token_hash, next_url, remember_device, expires_at, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ')->execute([
+        $requestId,
+        $email,
+        hash_web_login_token($token),
+        web_login_next_url($next),
+        $rememberDevice ? 1 : 0,
+        $expiresAt,
+        $now,
+    ]);
+
+    return [
+        'request_id' => $requestId,
+        'token'      => $token,
+        'name'       => trim((string) ($profile['name'] ?? '')),
+    ];
+}
+
+function send_web_login_email(string $toEmail, string $toName, string $loginUrl): bool|string
+{
+    $base = __DIR__ . '/phpmailer';
+    require_once $base . '/Exception.php';
+    require_once $base . '/PHPMailer.php';
+    require_once $base . '/SMTP.php';
+
+    $mailer = new \PHPMailer\PHPMailer\PHPMailer(true);
+    try {
+        if (MAIL_SMTP_HOST !== '') {
+            $mailer->isSMTP();
+            $mailer->Host       = MAIL_SMTP_HOST;
+            $mailer->Port       = (int) MAIL_SMTP_PORT;
+            $mailer->SMTPAuth   = MAIL_SMTP_USER !== '';
+            if ($mailer->SMTPAuth) {
+                $mailer->Username = MAIL_SMTP_USER;
+                $mailer->Password = MAIL_SMTP_PASS;
+            }
+            if (MAIL_SMTP_SECURE !== '') {
+                $mailer->SMTPSecure = MAIL_SMTP_SECURE;
+            }
+        } else {
+            $mailer->isMail();
+            $mailer->UseSendmailOptions = false;
+        }
+
+        $mailer->CharSet  = 'UTF-8';
+        $mailer->Encoding = '8bit';
+
+        $mailer->setFrom(MAIL_FROM_ADDRESS, MAIL_FROM_NAME);
+        if (MAIL_REPLY_TO !== '') {
+            $mailer->addReplyTo(MAIL_REPLY_TO);
+        }
+        $mailer->addAddress($toEmail, $toName);
+
+        $greetingName = $toName !== '' ? $toName : 'der';
+        $safeUrl = htmlspecialchars($loginUrl, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        $mailer->Subject = 'Log ind på CookingShark opskrifter';
+        $mailer->isHTML(true);
+        $mailer->Body =
+            "<p>Hej " . htmlspecialchars($greetingName, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') . ",</p>" .
+            "<p>Klik på knappen for at logge ind på opskriftssiden:</p>" .
+            "<p style=\"margin:1.5rem 0\"><a href=\"$safeUrl\" style=\"display:inline-block;padding:0.75rem 1.25rem;background:#1a6b7a;color:#fff;text-decoration:none;border-radius:8px;font-weight:600\">Log ind på opskrifter</a></p>" .
+            "<p>Eller åbn dette link i din browser:<br><a href=\"$safeUrl\">$safeUrl</a></p>" .
+            "<p>Linket udløber om 15 minutter. Hvis du ikke har bedt om at logge ind, kan du roligt ignorere mailen.</p>" .
+            "<p>Venlig hilsen,<br>ShoppingShark</p>";
+        $mailer->AltBody =
+            "Hej $greetingName,\r\n\r\n" .
+            "Klik på linket for at logge ind på opskriftssiden:\r\n\r\n" .
+            "$loginUrl\r\n\r\n" .
+            "Linket udløber om 15 minutter. Hvis du ikke har bedt om at logge ind, kan du roligt ignorere mailen.\r\n\r\n" .
+            "Venlig hilsen,\r\nShoppingShark";
+
+        $mailer->send();
+        return true;
+    } catch (\PHPMailer\PHPMailer\Exception $e) {
+        return $mailer->ErrorInfo !== '' ? $mailer->ErrorInfo : $e->getMessage();
+    } catch (\Throwable $e) {
+        return $e->getMessage();
+    }
+}
+
+/**
+ * @return array{request_id:string,token:string,name:string}|string
+ */
+function send_web_login_link_for_email(PDO $db, string $email, ?string $next = null, bool $rememberDevice = false): array|string
+{
+    $created = create_web_login_request($db, $email, $next, $rememberDevice);
+    if (!is_array($created)) {
+        return $created;
+    }
+
+    $loginUrl = web_portal_base_url() . 'login.php?token=' . urlencode($created['token']);
+    $sent = send_web_login_email($email, $created['name'], $loginUrl);
+    if ($sent !== true) {
+        return $sent;
+    }
+
+    return $created;
+}
+
+/**
+ * @return array{status:string,redirect?:string,profile?:array}
+ */
+function get_web_login_request_status(PDO $db, string $requestId): array
+{
+    $stmt = $db->prepare('SELECT * FROM web_login_requests WHERE id = ? LIMIT 1');
+    $stmt->execute([$requestId]);
+    $row = $stmt->fetch();
+    if (!$row) {
+        return ['status' => 'expired'];
+    }
+
+    $now = time();
+    if ($row['completed_at'] !== null) {
+        return [
+            'status'   => 'completed',
+            'redirect' => web_login_next_url($row['next_url'] ?? null),
+        ];
+    }
+    if ((int) $row['expires_at'] < $now) {
+        return ['status' => 'expired'];
+    }
+
+    return ['status' => 'pending'];
+}
+
+/**
+ * @return array{profile:array,redirect:string,device_token?:string}|null
+ */
+function complete_web_login_by_token(PDO $db, string $token): ?array
+{
+    $token = trim($token);
+    if ($token === '') {
+        return null;
+    }
+
+    $hash = hash_web_login_token($token);
+    $stmt = $db->prepare('SELECT * FROM web_login_requests WHERE token_hash = ? LIMIT 1');
+    $stmt->execute([$hash]);
+    $request = $stmt->fetch();
+    if (!$request) {
+        return null;
+    }
+
+    $now = time();
+    if ($request['completed_at'] !== null || (int) $request['expires_at'] < $now) {
+        return null;
+    }
+
+    $stmt = $db->prepare('SELECT * FROM profiles WHERE email = ? LIMIT 1');
+    $stmt->execute([$request['email']]);
+    $profile = $stmt->fetch();
+    if (!$profile) {
+        return null;
+    }
+
+    $db->prepare('UPDATE web_login_requests SET completed_at = ? WHERE id = ?')
+        ->execute([$now, $request['id']]);
+
+    $result = [
+        'profile'    => $profile,
+        'redirect'   => web_login_next_url($request['next_url'] ?? null),
+        'request_id' => (string) $request['id'],
+    ];
+
+    if (!empty($request['remember_device'])) {
+        $deviceToken = create_web_device_token($db, (string) $profile['id']);
+        if ($deviceToken !== null) {
+            $result['device_token'] = $deviceToken;
+        }
+    }
+
+    return $result;
+}
+
+/**
+ * Log in the browser tab that is waiting for e-mail approval, once the link was
+ * clicked elsewhere (often in a separate session started from the mail client).
+ *
+ * @return array{redirect:string,device_token?:string}|null
+ */
+function try_establish_web_login_from_request(PDO $db, string $requestId): ?array
+{
+    $requestId = trim($requestId);
+    if ($requestId === '') {
+        return null;
+    }
+
+    $pendingId = (string) ($_SESSION['pending_login_request_id'] ?? '');
+    if ($pendingId === '' || $pendingId !== $requestId) {
+        return null;
+    }
+
+    $stmt = $db->prepare('SELECT * FROM web_login_requests WHERE id = ? LIMIT 1');
+    $stmt->execute([$requestId]);
+    $request = $stmt->fetch();
+    if (!$request || $request['completed_at'] === null) {
+        return null;
+    }
+
+    $completedAt = (int) $request['completed_at'];
+    if (time() - $completedAt > 900) {
+        return null;
+    }
+
+    $stmt = $db->prepare('SELECT * FROM profiles WHERE email = ? LIMIT 1');
+    $stmt->execute([$request['email']]);
+    $profile = $stmt->fetch();
+    if (!$profile) {
+        return null;
+    }
+
+    login_profile($profile);
+
+    $result = [
+        'redirect' => web_login_next_url($request['next_url'] ?? null),
+    ];
+
+    if (!empty($request['remember_device'])) {
+        $deviceToken = create_web_device_token($db, (string) $profile['id']);
+        if ($deviceToken !== null) {
+            $result['device_token'] = $deviceToken;
+        }
+    }
+
+    unset($_SESSION['pending_login_email'], $_SESSION['pending_login_request_id'], $_SESSION['login_next']);
+
+    return $result;
+}
+
+function create_web_device_token(PDO $db, string $profileId): ?string
+{
+    if ($profileId === '') {
+        return null;
+    }
+
+    $token = new_web_login_token();
+    $now = time();
+    $expiresAt = $now + (365 * 24 * 60 * 60);
+
+    $db->prepare('
+        INSERT INTO web_device_tokens (id, profile_id, token_hash, expires_at, created_at, last_used_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ')->execute([
+        newId(),
+        $profileId,
+        hash_web_login_token($token),
+        $expiresAt,
+        $now,
+        $now,
+    ]);
+
+    return $token;
+}
+
+/**
+ * @return array{profile:array,device_token:string}|null
+ */
+function login_profile_by_device_token(PDO $db, string $token): ?array
+{
+    $token = trim($token);
+    if ($token === '') {
+        return null;
+    }
+
+    $hash = hash_web_login_token($token);
+    $stmt = $db->prepare('SELECT * FROM web_device_tokens WHERE token_hash = ? LIMIT 1');
+    $stmt->execute([$hash]);
+    $row = $stmt->fetch();
+    if (!$row) {
+        return null;
+    }
+
+    $now = time();
+    if ((int) $row['expires_at'] < $now) {
+        $db->prepare('DELETE FROM web_device_tokens WHERE id = ?')->execute([$row['id']]);
+        return null;
+    }
+
+    $stmt = $db->prepare('SELECT * FROM profiles WHERE id = ? LIMIT 1');
+    $stmt->execute([$row['profile_id']]);
+    $profile = $stmt->fetch();
+    if (!$profile) {
+        $db->prepare('DELETE FROM web_device_tokens WHERE id = ?')->execute([$row['id']]);
+        return null;
+    }
+
+    $db->prepare('UPDATE web_device_tokens SET last_used_at = ? WHERE id = ?')->execute([$now, $row['id']]);
+
+    return [
+        'profile'      => $profile,
+        'device_token' => $token,
+    ];
+}
+
+function revoke_web_device_token(PDO $db, string $token): void
+{
+    $token = trim($token);
+    if ($token === '') {
+        return;
+    }
+    $db->prepare('DELETE FROM web_device_tokens WHERE token_hash = ?')->execute([hash_web_login_token($token)]);
 }

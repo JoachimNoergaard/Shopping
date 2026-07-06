@@ -4,3 +4,6 @@
 
 define('DB_PASS',        '');
 define('MAIL_SMTP_PASS', '');
+
+// Optional: absolute URL to the recipe web portal (trailing slash optional).
+// define('WEB_PORTAL_BASE_URL', 'https://joachim.dk/shopping/web/');

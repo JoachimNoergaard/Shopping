@@ -114,12 +114,11 @@ function render_header(string $title, ?array $profile = null): void
     echo '</head><body>';
     echo '<header class="site-header"><div class="container header-inner">';
     $brandHref = $profile !== null ? 'recipes.php' : 'index.php';
-    echo '<a class="brand" href="' . h($brandHref) . '">🦈 CookingShark</a>';
+    echo '<a class="brand" href="' . h($brandHref) . '"><img class="brand-icon" src="assets/shopingsharkIcon.png" alt="">CookingShark</a>';
     if ($profile !== null) {
         echo '<nav class="header-nav">';
         echo '<span class="user-label">' . h($profile['name'] !== '' ? $profile['name'] : $profile['email']) . '</span>';
-        echo '<a href="recipe.php?new=1" class="btn btn-primary btn-sm">Ny opskrift</a>';
-        echo '<a href="logout.php" class="btn btn-ghost btn-sm">Log ud</a>';
+        echo '<a href="logout.php" class="btn btn-ghost btn-sm" data-logout-link>Log ud</a>';
         echo '</nav>';
     } else {
         echo '<nav class="header-nav">';
@@ -131,12 +130,14 @@ function render_header(string $title, ?array $profile = null): void
 
 function render_footer(bool $includeEditorJs = false): void
 {
+    echo '</main><footer class="site-footer"><div class="container">';
+    echo '<p>Opskrifter du gemmer her synkroniseres automatisk til ShoppingShark-appen.</p>';
+    echo '</div></footer>';
+    echo '<script src="assets/device-storage.js"></script>';
     if ($includeEditorJs) {
         echo '<script src="assets/editor.js"></script>';
     }
-    echo '</main><footer class="site-footer"><div class="container">';
-    echo '<p>Opskrifter du gemmer her synkroniseres automatisk til ShoppingShark-appen.</p>';
-    echo '</div></footer></body></html>';
+    echo '</body></html>';
 }
 
 /**

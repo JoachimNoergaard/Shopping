@@ -172,64 +172,90 @@ if (!$isNew && !$isEdit) {
             <p class="recipe-view-extra"><?= h(implode(' · ', $extra)) ?></p>
         <?php endif; ?>
 
-        <?php foreach ($existing['ingredientSections'] ?? [] as $section): ?>
-            <?php
-            $ings = $section['ingredients'] ?? [];
-            if ($ings === []) {
-                continue;
+        <?php
+        $ingredientSectionsWithItems = [];
+        foreach ($existing['ingredientSections'] ?? [] as $section) {
+            $ings = [];
+            foreach ($section['ingredients'] ?? [] as $ing) {
+                $name = trim((string) ($ing['name'] ?? ''));
+                if ($name === '') {
+                    continue;
+                }
+                $ings[] = $ing;
             }
-            ?>
+            if ($ings !== []) {
+                $ingredientSectionsWithItems[] = [
+                    'section' => $section,
+                    'ings'    => $ings,
+                ];
+            }
+        }
+        ?>
+        <?php if ($ingredientSectionsWithItems !== []): ?>
             <section class="recipe-view-section">
-                <?php if (($section['title'] ?? '') !== ''): ?>
-                    <h2><?= h($section['title']) ?></h2>
-                <?php else: ?>
-                    <h2>Ingredienser</h2>
-                <?php endif; ?>
-                <ul class="recipe-ingredient-list">
-                    <?php foreach ($ings as $ing): ?>
-                        <?php
-                        $name = trim((string) ($ing['name'] ?? ''));
-                        if ($name === '') {
-                            continue;
-                        }
-                        $qty = trim((string) ($ing['quantity'] ?? ''));
-                        $unit = trim((string) ($ing['unit'] ?? ''));
-                        $amount = trim($qty . ' ' . $unit);
-                        ?>
-                        <li>
-                            <?php if ($amount !== ''): ?>
-                                <span class="ingredient-amount"><?= h($amount) ?></span>
-                            <?php endif; ?>
-                            <?= h($name) ?>
-                        </li>
-                    <?php endforeach; ?>
-                </ul>
+                <h2>Ingredienser</h2>
+                <?php foreach ($ingredientSectionsWithItems as $item): ?>
+                    <?php
+                    $section = $item['section'];
+                    $ings = $item['ings'];
+                    ?>
+                    <?php if (($section['title'] ?? '') !== ''): ?>
+                        <h3 class="recipe-view-subsection-title"><?= h($section['title']) ?></h3>
+                    <?php endif; ?>
+                    <ul class="recipe-ingredient-list">
+                        <?php foreach ($ings as $ing): ?>
+                            <?php
+                            $name = trim((string) ($ing['name'] ?? ''));
+                            $qty = trim((string) ($ing['quantity'] ?? ''));
+                            $unit = trim((string) ($ing['unit'] ?? ''));
+                            $amount = trim($qty . ' ' . $unit);
+                            ?>
+                            <li>
+                                <?php if ($amount !== ''): ?>
+                                    <span class="ingredient-amount"><?= h($amount) ?></span>
+                                <?php endif; ?>
+                                <?= h($name) ?>
+                            </li>
+                        <?php endforeach; ?>
+                    </ul>
+                <?php endforeach; ?>
             </section>
-        <?php endforeach; ?>
+        <?php endif; ?>
 
-        <?php foreach ($existing['instructionSections'] ?? [] as $section): ?>
-            <?php
+        <?php
+        $instructionSectionsWithSteps = [];
+        foreach ($existing['instructionSections'] ?? [] as $section) {
             $steps = array_values(array_filter(
                 array_map('trim', $section['steps'] ?? []),
                 fn ($s) => $s !== ''
             ));
-            if ($steps === []) {
-                continue;
+            if ($steps !== []) {
+                $instructionSectionsWithSteps[] = [
+                    'section' => $section,
+                    'steps'   => $steps,
+                ];
             }
-            ?>
+        }
+        ?>
+        <?php if ($instructionSectionsWithSteps !== []): ?>
             <section class="recipe-view-section">
-                <?php if (($section['title'] ?? '') !== ''): ?>
-                    <h2><?= h($section['title']) ?></h2>
-                <?php else: ?>
-                    <h2>Fremgangsmåde</h2>
-                <?php endif; ?>
-                <ol class="recipe-step-list">
-                    <?php foreach ($steps as $step): ?>
-                        <li><?= nl2br(h($step)) ?></li>
-                    <?php endforeach; ?>
-                </ol>
+                <h2>Fremgangsmåde</h2>
+                <?php foreach ($instructionSectionsWithSteps as $item): ?>
+                    <?php
+                    $section = $item['section'];
+                    $steps = $item['steps'];
+                    ?>
+                    <?php if (($section['title'] ?? '') !== ''): ?>
+                        <h3 class="recipe-view-subsection-title"><?= h($section['title']) ?></h3>
+                    <?php endif; ?>
+                    <ol class="recipe-step-list">
+                        <?php foreach ($steps as $step): ?>
+                            <li><?= nl2br(h($step)) ?></li>
+                        <?php endforeach; ?>
+                    </ol>
+                <?php endforeach; ?>
             </section>
-        <?php endforeach; ?>
+        <?php endif; ?>
 
         <?php if (($existing['tips'] ?? '') !== ''): ?>
             <section class="recipe-view-section">
@@ -438,7 +464,11 @@ render_header($pageTitle, $profile);
                                     <label>Trin <?= $ii + 1 ?></label>
                                     <textarea name="inst_sec[<?= $si ?>][step][<?= $ii ?>]" rows="2"><?= h($step) ?></textarea>
                                 </div>
-                                <button type="button" class="btn btn-ghost btn-sm" data-remove-row>Fjern</button>
+                                <div class="step-row-actions">
+                                    <button type="button" class="btn btn-ghost btn-sm" data-move-step-up title="Flyt op" aria-label="Flyt trin op">↑</button>
+                                    <button type="button" class="btn btn-ghost btn-sm" data-move-step-down title="Flyt ned" aria-label="Flyt trin ned">↓</button>
+                                    <button type="button" class="btn btn-ghost btn-sm" data-remove-row>Fjern</button>
+                                </div>
                             </div>
                         <?php endforeach; ?>
                     </div>
@@ -526,7 +556,11 @@ render_header($pageTitle, $profile);
             <label>Trin</label>
             <textarea name="inst_sec[__SI__][step][__II__]" rows="2"></textarea>
         </div>
-        <button type="button" class="btn btn-ghost btn-sm" data-remove-row>Fjern</button>
+        <div class="step-row-actions">
+            <button type="button" class="btn btn-ghost btn-sm" data-move-step-up title="Flyt op" aria-label="Flyt trin op">↑</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-move-step-down title="Flyt ned" aria-label="Flyt trin ned">↓</button>
+            <button type="button" class="btn btn-ghost btn-sm" data-remove-row>Fjern</button>
+        </div>
     </div>
 </template>
 

@@ -45,10 +45,19 @@ a:hover { text-decoration: underline; }
 }
 
 .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
     font-size: 1.25rem;
     font-weight: 700;
     color: var(--text);
     text-decoration: none;
+}
+
+.brand-icon {
+    width: 32px;
+    height: 32px;
+    object-fit: contain;
 }
 
 .brand:hover {
@@ -381,6 +390,18 @@ button.btn {
     grid-template-columns: 1fr auto;
 }
 
+.step-row-actions {
+    display: flex;
+    gap: 0.25rem;
+    align-items: end;
+    flex-wrap: wrap;
+}
+
+.step-row-actions .btn[disabled] {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
 .toolbar {
     display: flex;
     gap: 0.5rem;
@@ -430,6 +451,28 @@ button.btn {
 .login-card .subtitle {
     color: var(--muted);
     margin-bottom: 1.25rem;
+}
+
+.login-pending p {
+    margin: 0 0 0.75rem;
+}
+
+.login-pending-status {
+    color: var(--muted);
+    font-size: 0.95rem;
+}
+
+.checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 400;
+    cursor: pointer;
+}
+
+.checkbox-row input {
+    width: auto;
+    margin: 0;
 }
 
 .rating-stars {
@@ -516,6 +559,12 @@ button.btn {
 .recipe-view-section h2 {
     font-size: 1.15rem;
     margin-bottom: 0.65rem;
+}
+
+.recipe-view-subsection-title {
+    font-size: 1rem;
+    margin: 1rem 0 0.5rem;
+    color: var(--muted);
 }
 
 .recipe-ingredient-list,

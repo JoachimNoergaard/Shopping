@@ -17,13 +17,16 @@
         return node;
     }
 
-    function wireRemoveButtons(root) {
+    function wireRemoveButtons(root, onRemove) {
         root.querySelectorAll('[data-remove-row]').forEach((btn) => {
             if (btn.dataset.wired) return;
             btn.dataset.wired = '1';
             btn.addEventListener('click', () => {
                 const row = btn.closest('[data-row]');
-                if (row) row.remove();
+                if (row) {
+                    row.remove();
+                    if (onRemove) onRemove();
+                }
             });
         });
         root.querySelectorAll('[data-remove-section]').forEach((btn) => {
@@ -34,6 +37,61 @@
                 if (section) section.remove();
             });
         });
+    }
+
+    function instructionSectionIndex(section) {
+        const container = document.getElementById('instruction-sections');
+        if (!container) return 0;
+        return Array.from(container.querySelectorAll('[data-instruction-section]')).indexOf(section);
+    }
+
+    function reindexInstructionSteps(section) {
+        const list = section.querySelector('[data-step-list]');
+        if (!list) return;
+
+        const si = instructionSectionIndex(section);
+        list.querySelectorAll('[data-row]').forEach((row, ii) => {
+            const label = row.querySelector('label');
+            const textarea = row.querySelector('textarea[name]');
+            if (label) label.textContent = 'Trin ' + (ii + 1);
+            if (textarea) textarea.setAttribute('name', 'inst_sec[' + si + '][step][' + ii + ']');
+        });
+        updateStepMoveButtons(list);
+    }
+
+    function updateStepMoveButtons(list) {
+        const rows = list.querySelectorAll('[data-row]');
+        rows.forEach((row, index) => {
+            const up = row.querySelector('[data-move-step-up]');
+            const down = row.querySelector('[data-move-step-down]');
+            if (up) up.disabled = index === 0;
+            if (down) down.disabled = index === rows.length - 1;
+        });
+    }
+
+    function wireStepReorder(section) {
+        const list = section.querySelector('[data-step-list]');
+        if (!list || list.dataset.reorderWired) return;
+        list.dataset.reorderWired = '1';
+
+        list.addEventListener('click', (event) => {
+            const upBtn = event.target.closest('[data-move-step-up]');
+            const downBtn = event.target.closest('[data-move-step-down]');
+            if (!upBtn && !downBtn) return;
+
+            const row = (upBtn || downBtn).closest('[data-row]');
+            if (!row) return;
+
+            if (upBtn && row.previousElementSibling) {
+                list.insertBefore(row, row.previousElementSibling);
+            } else if (downBtn && row.nextElementSibling) {
+                list.insertBefore(row.nextElementSibling, row);
+            }
+
+            reindexInstructionSteps(section);
+        });
+
+        updateStepMoveButtons(list);
     }
 
     function wireIngredientSection(section) {
@@ -65,15 +123,19 @@
         const container = document.getElementById('instruction-sections');
         if (!list || !addBtn || !container) return;
 
+        wireStepReorder(section);
+
         addBtn.addEventListener('click', () => {
             const si = Array.from(container.querySelectorAll('[data-instruction-section]')).indexOf(section);
             const ii = list.querySelectorAll('[data-row]').length;
             const row = cloneFromTemplate('tpl-step-row', { '__SI__': si, '__II__': ii });
             if (!row) return;
             list.appendChild(row);
-            wireRemoveButtons(row);
+            wireRemoveButtons(row, () => reindexInstructionSteps(section));
+            reindexInstructionSteps(section);
         });
-        wireRemoveButtons(section);
+        wireRemoveButtons(section, () => reindexInstructionSteps(section));
+        reindexInstructionSteps(section);
     }
 
     const ingContainer = document.getElementById('ingredient-sections');

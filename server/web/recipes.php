@@ -6,6 +6,9 @@ require_once __DIR__ . '/bootstrap.php';
 $profile = require_login();
 
 $recipes = get_recipes_for_profile($db, $profile['id']);
+usort($recipes, static function (array $a, array $b): int {
+    return strcasecmp((string) ($a['name'] ?? ''), (string) ($b['name'] ?? ''));
+});
 $courseTypes = distinct_recipe_course_types($recipes);
 $success = flash_get('success');
 
