@@ -1135,9 +1135,15 @@ private fun RecipeDetailScreen(
         )
     }
 
-    val linkedRecipes = remember(recipe.linkedRecipeIds, allRecipes) {
-        recipe.linkedRecipeIds
+    // Links are shown in both directions: recipes this one points to, plus
+    // recipes that point back to this one (so the reference is visible on both).
+    val linkedRecipes = remember(recipe.id, recipe.linkedRecipeIds, allRecipes) {
+        val forward = recipe.linkedRecipeIds
             .mapNotNull { id -> allRecipes.firstOrNull { it.id == id } }
+        val backward = allRecipes.filter { recipe.id in it.linkedRecipeIds }
+        (forward + backward)
+            .distinctBy { it.id }
+            .filter { it.id != recipe.id }
             .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
     }
 
