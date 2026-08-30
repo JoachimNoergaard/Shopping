@@ -344,6 +344,17 @@ object ShoppingRepository {
     fun findRecipeById(id: String): Recipe? =
         _recipes.value.firstOrNull { it.id == id }
 
+    fun setRecipePinned(recipeId: String, pinned: Boolean) {
+        val recipe = _recipes.value.firstOrNull { it.id == recipeId } ?: return
+        val updated = recipe.copy(
+            isPinned = pinned,
+            pinnedAt = if (pinned) System.currentTimeMillis() else null,
+        )
+        _recipes.update { list -> list.map { if (it.id == recipeId) updated else it } }
+        saveRecipes(_recipes.value)
+        scope.launch { pushRecipeToServer(updated, clearRecipeImageOnServer = false) }
+    }
+
     fun deleteRecipe(id: String) {
         val recipe = _recipes.value.firstOrNull { it.id == id } ?: return
         RecipePhotoStorage.deletePhoto(appContext, id)

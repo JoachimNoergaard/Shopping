@@ -126,11 +126,24 @@ $db->exec('CREATE TABLE IF NOT EXISTS recipes (
     tips                 TEXT         NOT NULL,
     image_url            VARCHAR(768) NULL,
     linked_recipe_ids    TEXT         NOT NULL DEFAULT \'[]\',
+    is_pinned            TINYINT(1)   NOT NULL DEFAULT 0,
+    pinned_at            BIGINT       NULL,
     created_at           BIGINT       NOT NULL,
     updated_at           BIGINT       NOT NULL,
     PRIMARY KEY (id),
     INDEX idx_recipes_profile (profile_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+
+try {
+    $db->exec('ALTER TABLE recipes ADD COLUMN is_pinned TINYINT(1) NOT NULL DEFAULT 0');
+} catch (PDOException $e) {
+    // Column already exists.
+}
+try {
+    $db->exec('ALTER TABLE recipes ADD COLUMN pinned_at BIGINT NULL');
+} catch (PDOException $e) {
+    // Column already exists.
+}
 
 $db->exec('CREATE TABLE IF NOT EXISTS web_login_requests (
     id           VARCHAR(36)  NOT NULL,
@@ -452,7 +465,12 @@ function recipeToJson(array $row): array
         'tips'                => $row['tips'] ?? '',
         'createdAt'           => (int) $row['created_at'],
         'linkedRecipeIds'     => json_decode($row['linked_recipe_ids'] ?? '[]', true) ?: [],
+        'isPinned'            => !empty($row['is_pinned']),
+        'pinnedAt'            => isset($row['pinned_at']) ? (int) $row['pinned_at'] : null,
     ];
+    if ($out['pinnedAt'] === 0) {
+        $out['pinnedAt'] = null;
+    }
     $abs = absolute_recipe_image_url($row['image_url'] ?? null);
     if ($abs !== null && $abs !== '') {
         $out['imageUrl'] = $abs;
@@ -469,11 +487,17 @@ function recipeToJson(array $row): array
 function upsert_recipe(PDO $db, string $profileId, string $id, array $body): array
 {
     $now = nowMs();
+    $isPinned = !empty($body['isPinned']);
+    $pinnedAt = $isPinned
+        ? (isset($body['pinnedAt']) ? (int) $body['pinnedAt'] : $now)
+        : null;
+
     $db->prepare('
         INSERT INTO recipes (id, profile_id, name, description, rating, servings, nutrition_facts,
             prep_time_minutes, total_time_minutes, durability, course_type,
-            ingredient_sections, instruction_sections, tips, linked_recipe_ids, created_at, updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ingredient_sections, instruction_sections, tips, linked_recipe_ids,
+            is_pinned, pinned_at, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON DUPLICATE KEY UPDATE
             name                 = VALUES(name),
             description          = VALUES(description),
@@ -488,6 +512,8 @@ function upsert_recipe(PDO $db, string $profileId, string $id, array $body): arr
             instruction_sections = VALUES(instruction_sections),
             tips                 = VALUES(tips),
             linked_recipe_ids    = VALUES(linked_recipe_ids),
+            is_pinned            = VALUES(is_pinned),
+            pinned_at            = VALUES(pinned_at),
             updated_at           = VALUES(updated_at)
     ')->execute([
         $id,
@@ -505,6 +531,8 @@ function upsert_recipe(PDO $db, string $profileId, string $id, array $body): arr
         json_encode($body['instructionSections'] ?? [], JSON_UNESCAPED_UNICODE),
         $body['tips'] ?? '',
         json_encode($body['linkedRecipeIds'] ?? [], JSON_UNESCAPED_UNICODE),
+        $isPinned ? 1 : 0,
+        $pinnedAt,
         $body['createdAt'] ?? $now,
         $now,
     ]);

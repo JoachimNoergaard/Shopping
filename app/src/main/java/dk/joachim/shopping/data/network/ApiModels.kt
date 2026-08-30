@@ -95,6 +95,8 @@ data class ApiRecipe(
     /** Absolute URL of the JPEG on the server (see recipe_images/ on the API host). */
     val imageUrl: String? = null,
     val linkedRecipeIds: List<String> = emptyList(),
+    val isPinned: Boolean = false,
+    val pinnedAt: Long? = null,
 ) {
     fun toRecipe() = Recipe(
         id = id,
@@ -114,6 +116,8 @@ data class ApiRecipe(
         createdAt = createdAt,
         imageUrl = imageUrl,
         linkedRecipeIds = linkedRecipeIds,
+        isPinned = isPinned,
+        pinnedAt = pinnedAt,
     )
 }
 
@@ -135,6 +139,8 @@ data class UpsertRecipeRequest(
     val tips: String,
     val createdAt: Long,
     val linkedRecipeIds: List<String> = emptyList(),
+    val isPinned: Boolean = false,
+    val pinnedAt: Long? = null,
     /**
      * Omit to leave the server image unchanged; use `""` to clear.
      * Non-empty: JPEG bytes as standard Base64.

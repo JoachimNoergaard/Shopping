@@ -79,6 +79,14 @@ data class CookingUiState(
     fun recipesForPlan(plan: MenuPlan): List<Recipe> =
         plan.recipeIds.mapNotNull { id -> recipes.find { it.id == id } }
 
+    val pinnedRecipes: List<Recipe>
+        get() = recipes
+            .filter { it.isPinned }
+            .sortedWith(
+                compareByDescending<Recipe> { it.pinnedAt ?: 0L }
+                    .thenBy(String.CASE_INSENSITIVE_ORDER) { it.name },
+            )
+
     val editPlanRecipes: List<Recipe>
         get() = editPlanRecipeIds.mapNotNull { id -> recipes.find { it.id == id } }
 
@@ -182,7 +190,9 @@ class CookingViewModel : ViewModel() {
             pendingDeleteRecipe = extra.pendingDeleteRecipe,
             pendingRemoveRecipeFromPlan = extra.pendingRemoveRecipeFromPlan,
             expandedPlanId = extra.expandedPlanId,
-            viewingRecipe = extra.viewingRecipe,
+            viewingRecipe = extra.viewingRecipe?.let { viewing ->
+                recipes.firstOrNull { it.id == viewing.id } ?: viewing
+            },
             viewingMenuPlanId = extra.viewingMenuPlanId,
             completedSteps = completed,
             editingRecipe = extra.editingRecipe,
@@ -408,17 +418,22 @@ class CookingViewModel : ViewModel() {
         val name = _extra.value.newRecipeName.trim()
         val courseType = _extra.value.newRecipeCourseType.trim()
         if (name.isBlank() || courseType.isBlank()) return
-        repository.addRecipe(
-            name,
-            _extra.value.newRecipeDescription.trim(),
+        val recipe = Recipe(
+            id = UUID.randomUUID().toString(),
+            profileId = repository.getOrCreateProfileId(),
+            name = name,
+            description = _extra.value.newRecipeDescription.trim(),
             courseType = courseType,
         )
+        repository.addRecipe(recipe)
         _extra.update {
             it.copy(
                 showAddRecipeDialog = false,
                 newRecipeName = "",
                 newRecipeDescription = "",
                 newRecipeCourseType = "",
+                editingRecipe = recipe,
+                hadRecipePhotoWhenEditorOpened = false,
             )
         }
     }
@@ -876,6 +891,9 @@ class CookingViewModel : ViewModel() {
 
     fun addRecipeToMenuPlan(planId: String, recipeId: String) =
         repository.addRecipeToMenuPlan(planId, recipeId)
+
+    fun setRecipePinned(recipeId: String, pinned: Boolean) =
+        repository.setRecipePinned(recipeId, pinned)
 
     fun createMenuPlanAndAddRecipe(planName: String, recipeId: String) {
         val planId = repository.addMenuPlan(planName.trim())

@@ -190,6 +190,8 @@ object RemoteDataSource {
                     tips = recipe.tips,
                     createdAt = recipe.createdAt,
                     linkedRecipeIds = recipe.linkedRecipeIds,
+                    isPinned = recipe.isPinned,
+                    pinnedAt = recipe.pinnedAt,
                     imageBase64 = imageBase64,
                 )
             )

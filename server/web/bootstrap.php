@@ -242,6 +242,8 @@ function recipe_body_from_post(array $post, ?array $existing = null): array
         'tips'                => trim((string) ($post['tips'] ?? '')),
         'linkedRecipeIds'     => $linked,
         'createdAt'           => $existing['createdAt'] ?? nowMs(),
+        'isPinned'            => !empty($existing['isPinned'] ?? false),
+        'pinnedAt'            => isset($existing['pinnedAt']) ? $existing['pinnedAt'] : null,
     ];
 }
 

@@ -42,4 +42,8 @@ data class Recipe(
     val imageUrl: String? = null,
     /** Other recipes this one links to (for “see also” navigation). */
     val linkedRecipeIds: List<String> = emptyList(),
+    /** When true, the recipe appears on the cooking overview list with menu plans. */
+    val isPinned: Boolean = false,
+    /** Epoch millis when the recipe was pinned; used for overview ordering. */
+    val pinnedAt: Long? = null,
 )

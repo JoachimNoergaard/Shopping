@@ -48,6 +48,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
@@ -244,6 +246,15 @@ fun CookingScreen(
                 viewModel.createMenuPlanAndAddRecipe(name, uiState.viewingRecipe!!.id)
                 Toast.makeText(context, "Tilføjet til $name", Toast.LENGTH_SHORT).show()
             },
+            onTogglePinned = {
+                val recipe = uiState.viewingRecipe ?: return@RecipeDetailScreen
+                viewModel.setRecipePinned(recipe.id, !recipe.isPinned)
+                Toast.makeText(
+                    context,
+                    if (!recipe.isPinned) "Fastgjort til oversigt" else "Fjernet fra oversigt",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            },
             onEdit = viewModel::startEditingFromViewer,
             onOpenLinkedRecipe = viewModel::openLinkedRecipe,
             onDismiss = viewModel::onRecipeViewerBack,
@@ -296,6 +307,12 @@ fun CookingScreen(
                     }
                 }
                 base.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+            }
+        }
+        val overviewItems = remember(uiState.pinnedRecipes, uiState.menuPlans) {
+            buildList {
+                uiState.pinnedRecipes.forEach { add(CookingOverviewItem.PinnedRecipe(it)) }
+                uiState.menuPlans.forEach { add(CookingOverviewItem.Plan(it)) }
             }
         }
 
@@ -411,6 +428,9 @@ fun CookingScreen(
                                         recipe = recipe,
                                         menuPlans = uiState.menuPlans,
                                         onClick = { viewModel.openRecipeViewer(recipe) },
+                                        onTogglePinned = {
+                                            viewModel.setRecipePinned(recipe.id, !recipe.isPinned)
+                                        },
                                         onAddToPlan = { planId ->
                                             viewModel.addRecipeToMenuPlan(planId, recipe.id)
                                             val planName = uiState.menuPlans.firstOrNull { it.id == planId }?.name
@@ -420,37 +440,71 @@ fun CookingScreen(
                                 }
                             }
                         }
-                    } else if (uiState.menuPlans.isNotEmpty()) {
+                    } else if (overviewItems.isNotEmpty()) {
                         itemsIndexed(
-                            uiState.menuPlans,
-                            key = { _, it -> "plan_${it.id}" },
-                        ) { index, plan ->
+                            overviewItems,
+                            key = { _, item ->
+                                when (item) {
+                                    is CookingOverviewItem.Plan -> "plan_${item.plan.id}"
+                                    is CookingOverviewItem.PinnedRecipe -> "pinned_${item.recipe.id}"
+                                }
+                            },
+                        ) { index, item ->
                             Column(modifier = Modifier.fillMaxWidth()) {
                                 if (index > 0) {
-                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Spacer(
+                                        modifier = Modifier.height(
+                                            if (item is CookingOverviewItem.PinnedRecipe &&
+                                                overviewItems.getOrNull(index - 1) is CookingOverviewItem.PinnedRecipe
+                                            ) {
+                                                4.dp
+                                            } else {
+                                                12.dp
+                                            },
+                                        ),
+                                    )
                                 }
-                                MenuPlanCard(
-                                plan = plan,
-                                recipes = uiState.recipesForPlan(plan),
-                                isExpanded = uiState.expandedPlanId == plan.id,
-                                onToggleExpand = { viewModel.togglePlanExpanded(plan.id) },
-                                onEditPlan = { viewModel.requestEditPlan(plan) },
-                                onRemoveRecipe = { recipeId ->
-                                    viewModel.requestRemoveRecipeFromMenuPlan(
-                                        plan.id,
-                                        recipeId
-                                    )
-                                },
-                                onEditRecipe = { recipe ->
-                                    viewModel.openRecipeViewer(
-                                        recipe,
-                                        plan.id
-                                    )
-                                },
-                                groceryListName = uiState.targetGroceryListName,
-                                canAddToGroceryList = uiState.canAddIngredientsToGroceryList,
-                                onAddIngredientToGroceryList = viewModel::addMergedIngredientToGroceryList,
-                                )
+                                when (item) {
+                                    is CookingOverviewItem.PinnedRecipe -> {
+                                        SearchRecipeRow(
+                                            recipe = item.recipe,
+                                            menuPlans = uiState.menuPlans,
+                                            onClick = { viewModel.openRecipeViewer(item.recipe) },
+                                            onTogglePinned = {
+                                                viewModel.setRecipePinned(item.recipe.id, false)
+                                            },
+                                            onAddToPlan = { planId ->
+                                                viewModel.addRecipeToMenuPlan(planId, item.recipe.id)
+                                                val planName = uiState.menuPlans.firstOrNull { it.id == planId }?.name
+                                                Toast.makeText(context, "Tilføjet til $planName", Toast.LENGTH_SHORT).show()
+                                            },
+                                        )
+                                    }
+                                    is CookingOverviewItem.Plan -> {
+                                        MenuPlanCard(
+                                            plan = item.plan,
+                                            recipes = uiState.recipesForPlan(item.plan),
+                                            isExpanded = uiState.expandedPlanId == item.plan.id,
+                                            onToggleExpand = { viewModel.togglePlanExpanded(item.plan.id) },
+                                            onEditPlan = { viewModel.requestEditPlan(item.plan) },
+                                            onRemoveRecipe = { recipeId ->
+                                                viewModel.requestRemoveRecipeFromMenuPlan(
+                                                    item.plan.id,
+                                                    recipeId,
+                                                )
+                                            },
+                                            onEditRecipe = { recipe ->
+                                                viewModel.openRecipeViewer(
+                                                    recipe,
+                                                    item.plan.id,
+                                                )
+                                            },
+                                            groceryListName = uiState.targetGroceryListName,
+                                            canAddToGroceryList = uiState.canAddIngredientsToGroceryList,
+                                            onAddIngredientToGroceryList = viewModel::addMergedIngredientToGroceryList,
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -1089,6 +1143,7 @@ private fun RecipeDetailScreen(
     menuPlans: List<MenuPlan> = emptyList(),
     onAddToPlan: (planId: String) -> Unit = {},
     onCreatePlanAndAdd: (name: String) -> Unit = {},
+    onTogglePinned: () -> Unit = {},
     onEdit: () -> Unit,
     onOpenLinkedRecipe: (String) -> Unit,
     onDismiss: () -> Unit,
@@ -1157,11 +1212,6 @@ private fun RecipeDetailScreen(
                     }
                 },
                 actions = {
-                    if (showAddToPlan) {
-                        IconButton(onClick = { showPlanPicker = true }) {
-                            Icon(Icons.Default.Add, contentDescription = "Tilføj til madplan")
-                        }
-                    }
                     IconButton(onClick = {
                         keepScreenOnActive = !keepScreenOnActive
                         if (keepScreenOnActive) {
@@ -1182,6 +1232,40 @@ private fun RecipeDetailScreen(
                             expanded = showOverflowMenu,
                             onDismissRequest = { showOverflowMenu = false },
                         ) {
+                            if (showAddToPlan) {
+                                DropdownMenuItem(
+                                    text = { Text("Tilføj til madplan") },
+                                    leadingIcon = {
+                                        Icon(Icons.Default.Add, contentDescription = null)
+                                    },
+                                    onClick = {
+                                        showOverflowMenu = false
+                                        showPlanPicker = true
+                                    },
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (recipe.isPinned) "Fjern fra oversigt"
+                                        else "Fastgør til oversigt",
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = if (recipe.isPinned) {
+                                            Icons.Default.Bookmark
+                                        } else {
+                                            Icons.Default.BookmarkBorder
+                                        },
+                                        contentDescription = null,
+                                    )
+                                },
+                                onClick = {
+                                    showOverflowMenu = false
+                                    onTogglePinned()
+                                },
+                            )
                             DropdownMenuItem(
                                 text = { Text("Del opskrift") },
                                 leadingIcon = {
@@ -2960,6 +3044,7 @@ private fun SearchRecipeRow(
     recipe: Recipe,
     menuPlans: List<MenuPlan>,
     onClick: () -> Unit,
+    onTogglePinned: () -> Unit,
     onAddToPlan: (planId: String) -> Unit,
 ) {
     var showAddToPlanDialog by remember { mutableStateOf(false) }
@@ -2983,7 +3068,7 @@ private fun SearchRecipeRow(
                     onClick = onClick,
                     onLongClick = { showAddToPlanDialog = true },
                 )
-                .padding(start = 20.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                .padding(start = 20.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(
@@ -3006,6 +3091,25 @@ private fun SearchRecipeRow(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+            IconButton(onClick = onTogglePinned) {
+                Icon(
+                    imageVector = if (recipe.isPinned) {
+                        Icons.Default.Bookmark
+                    } else {
+                        Icons.Default.BookmarkBorder
+                    },
+                    contentDescription = if (recipe.isPinned) {
+                        "Fjern ${recipe.name} fra oversigt"
+                    } else {
+                        "Fastgør ${recipe.name} til oversigt"
+                    },
+                    tint = if (recipe.isPinned) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
             }
             IconButton(
                 onClick = { showAddToPlanDialog = true },
@@ -3561,4 +3665,9 @@ private fun ImportRecipeDialog(
             TextButton(onClick = onDismiss) { Text("Annuller") }
         }
     )
+}
+
+private sealed class CookingOverviewItem {
+    data class Plan(val plan: MenuPlan) : CookingOverviewItem()
+    data class PinnedRecipe(val recipe: Recipe) : CookingOverviewItem()
 }
