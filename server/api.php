@@ -12,7 +12,11 @@
  * PATCH  /lists/{id}                                Rename a list
  * DELETE /lists/{id}                                Delete list + items
  * PUT    /lists/{id}/items/{itemId}                 Create or update an item
- * DELETE /lists/{id}/items/{itemId}                 Delete an item
+ * DELETE /lists/{id}/members/{profileId}         Remove member
+ * GET    /lists/{id}/share?profileId=…           Get share link (owner)
+ * POST   /lists/{id}/share                       Enable sharing (owner)
+ * DELETE /lists/{id}/share?profileId=…           Disable sharing (owner)
+ * POST   /lists/{id}/share/regenerate            New share link (owner)
  *
  * GET    /profile/{profileId}/recipes               List all recipes
  * PUT    /profile/{profileId}/recipes/{id}          Create or update a recipe
@@ -156,6 +160,81 @@ if ($method === 'DELETE' && count($segments) === 4 && $segments[0] === 'lists' &
     $db->prepare('DELETE FROM list_members WHERE list_id = ? AND profile_id = ?')
        ->execute([$listId, $profileId]);
     json_out(['listId' => $listId, 'profileId' => $profileId]);
+}
+
+// ── GET /lists/{id}/share ─────────────────────────────────────────────────
+if ($method === 'GET' && count($segments) === 3 && $segments[0] === 'lists' && $segments[2] === 'share') {
+    $listId    = $segments[1];
+    $profileId = $_GET['profileId'] ?? '';
+    if ($profileId === '') {
+        json_out(['error' => 'Missing profileId'], 400);
+    }
+
+    $stmt = $db->prepare('SELECT share_enabled FROM lists WHERE id = ? AND owner_id = ? LIMIT 1');
+    $stmt->execute([$listId, $profileId]);
+    $row = $stmt->fetch();
+    if (!$row) {
+        json_out(['error' => 'Not allowed'], 403);
+    }
+
+    $token = get_list_share_token_for_owner($db, $listId, $profileId);
+    json_out([
+        'shareEnabled' => !empty($row['share_enabled']),
+        'shareUrl'     => $token !== null ? list_share_url($token) : null,
+    ]);
+}
+
+// ── POST /lists/{id}/share ────────────────────────────────────────────────
+if ($method === 'POST' && count($segments) === 3 && $segments[0] === 'lists' && $segments[2] === 'share') {
+    $listId    = $segments[1];
+    $profileId = $body['profileId'] ?? '';
+    if ($profileId === '') {
+        json_out(['error' => 'Missing profileId'], 400);
+    }
+
+    $token = enable_list_share($db, $listId, $profileId);
+    if ($token === null) {
+        json_out(['error' => 'Not allowed'], 403);
+    }
+
+    json_out([
+        'shareEnabled' => true,
+        'shareUrl'     => list_share_url($token),
+    ]);
+}
+
+// ── DELETE /lists/{id}/share ──────────────────────────────────────────────
+if ($method === 'DELETE' && count($segments) === 3 && $segments[0] === 'lists' && $segments[2] === 'share') {
+    $listId    = $segments[1];
+    $profileId = $_GET['profileId'] ?? '';
+    if ($profileId === '') {
+        json_out(['error' => 'Missing profileId'], 400);
+    }
+
+    if (!disable_list_share($db, $listId, $profileId)) {
+        json_out(['error' => 'Not allowed'], 403);
+    }
+
+    json_out(['shareEnabled' => false, 'shareUrl' => null]);
+}
+
+// ── POST /lists/{id}/share/regenerate ───────────────────────────────────────
+if ($method === 'POST' && count($segments) === 4 && $segments[0] === 'lists' && $segments[2] === 'share' && $segments[3] === 'regenerate') {
+    $listId    = $segments[1];
+    $profileId = $body['profileId'] ?? '';
+    if ($profileId === '') {
+        json_out(['error' => 'Missing profileId'], 400);
+    }
+
+    $token = enable_list_share($db, $listId, $profileId);
+    if ($token === null) {
+        json_out(['error' => 'Not allowed'], 403);
+    }
+
+    json_out([
+        'shareEnabled' => true,
+        'shareUrl'     => list_share_url($token),
+    ]);
 }
 
 // ── GET /lists/{id} ────────────────────────────────────────────────────────

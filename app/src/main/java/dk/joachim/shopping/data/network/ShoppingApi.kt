@@ -44,6 +44,30 @@ interface ShoppingApi {
     @DELETE("lists/{id}")
     suspend fun deleteList(@Path("id") id: String)
 
+    @GET("lists/{id}/share")
+    suspend fun getListShare(
+        @Path("id") listId: String,
+        @Query("profileId") profileId: String,
+    ): ListShareResponse
+
+    @POST("lists/{id}/share")
+    suspend fun enableListShare(
+        @Path("id") listId: String,
+        @Body request: ListShareRequest,
+    ): ListShareResponse
+
+    @DELETE("lists/{id}/share")
+    suspend fun disableListShare(
+        @Path("id") listId: String,
+        @Query("profileId") profileId: String,
+    ): ListShareResponse
+
+    @POST("lists/{id}/share/regenerate")
+    suspend fun regenerateListShare(
+        @Path("id") listId: String,
+        @Body request: ListShareRequest,
+    ): ListShareResponse
+
     @PUT("lists/{id}/items/{itemId}")
     suspend fun upsertItem(
         @Path("id") listId: String,

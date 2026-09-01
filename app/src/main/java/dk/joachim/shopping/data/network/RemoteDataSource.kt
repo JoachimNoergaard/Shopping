@@ -45,6 +45,18 @@ object RemoteDataSource {
     suspend fun patchList(id: String, request: PatchListRequest): Boolean =
         runCatching { api.patchList(id, request) }.isSuccess
 
+    suspend fun getListShare(listId: String, profileId: String): ListShareResponse? =
+        runCatching { api.getListShare(listId, profileId) }.getOrNull()
+
+    suspend fun enableListShare(listId: String, profileId: String): ListShareResponse? =
+        runCatching { api.enableListShare(listId, ListShareRequest(profileId)) }.getOrNull()
+
+    suspend fun disableListShare(listId: String, profileId: String): ListShareResponse? =
+        runCatching { api.disableListShare(listId, profileId) }.getOrNull()
+
+    suspend fun regenerateListShare(listId: String, profileId: String): ListShareResponse? =
+        runCatching { api.regenerateListShare(listId, ListShareRequest(profileId)) }.getOrNull()
+
     suspend fun upsertItem(listId: String, item: GroceryItem): Boolean =
         runCatching { api.upsertItem(listId, item.id, item) }.isSuccess
 

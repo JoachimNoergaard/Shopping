@@ -34,13 +34,33 @@ $db = new PDO(
 );
 
 $db->exec('CREATE TABLE IF NOT EXISTS lists (
-    id         VARCHAR(36)  NOT NULL,
-    name       VARCHAR(255) NOT NULL,
-    owner_id   VARCHAR(36)  NOT NULL DEFAULT \'\',
-    created_at BIGINT       NOT NULL,
-    updated_at BIGINT       NOT NULL,
-    PRIMARY KEY (id)
+    id               VARCHAR(36)  NOT NULL,
+    name             VARCHAR(255) NOT NULL,
+    owner_id         VARCHAR(36)  NOT NULL DEFAULT \'\',
+    share_enabled    TINYINT(1)   NOT NULL DEFAULT 0,
+    share_token      VARCHAR(64)  NULL,
+    share_token_hash CHAR(64)     NULL,
+    created_at       BIGINT       NOT NULL,
+    updated_at       BIGINT       NOT NULL,
+    PRIMARY KEY (id),
+    INDEX idx_lists_share_token (share_token_hash)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+
+try {
+    $db->exec('ALTER TABLE lists ADD COLUMN share_enabled TINYINT(1) NOT NULL DEFAULT 0');
+} catch (PDOException $e) {
+    // Column already exists.
+}
+try {
+    $db->exec('ALTER TABLE lists ADD COLUMN share_token_hash CHAR(64) NULL');
+} catch (PDOException $e) {
+    // Column already exists.
+}
+try {
+    $db->exec('ALTER TABLE lists ADD COLUMN share_token VARCHAR(64) NULL');
+} catch (PDOException $e) {
+    // Column already exists.
+}
 
 $db->exec('CREATE TABLE IF NOT EXISTS items (
     id          VARCHAR(36)  NOT NULL,
@@ -330,12 +350,426 @@ function listWithItems(PDO $db, array $list): array
     $stmt = $db->prepare('SELECT * FROM items WHERE list_id = ? ORDER BY updated_at ASC, id ASC');
     $stmt->execute([$list['id']]);
     return [
-        'id'        => $list['id'],
-        'name'      => $list['name'],
-        'ownerId'   => $list['owner_id'] ?? '',
-        'createdAt' => (int) $list['created_at'],
-        'items'     => array_map('rowToItem', $stmt->fetchAll()),
+        'id'           => $list['id'],
+        'name'         => $list['name'],
+        'ownerId'      => $list['owner_id'] ?? '',
+        'shareEnabled' => !empty($list['share_enabled']),
+        'createdAt'    => (int) $list['created_at'],
+        'items'        => array_map('rowToItem', $stmt->fetchAll()),
     ];
+}
+
+function list_accessible_by_profile(PDO $db, string $listId, string $profileId): bool
+{
+    $stmt = $db->prepare('SELECT 1 FROM list_members WHERE list_id = ? AND profile_id = ? LIMIT 1');
+    $stmt->execute([$listId, $profileId]);
+
+    return (bool) $stmt->fetchColumn();
+}
+
+function list_owned_by_profile(array $list, array $profile): bool
+{
+    return ($list['ownerId'] ?? '') === $profile['id'];
+}
+
+/** @return list<array> */
+function get_lists_for_profile(PDO $db, string $profileId): array
+{
+    $stmt = $db->prepare('
+        SELECT l.* FROM lists l
+        INNER JOIN list_members m ON m.list_id = l.id
+        WHERE m.profile_id = ?
+        ORDER BY l.updated_at DESC, l.created_at DESC
+    ');
+    $stmt->execute([$profileId]);
+
+    return array_map(static fn ($row) => listWithItems($db, $row), $stmt->fetchAll());
+}
+
+function get_list_for_profile(PDO $db, string $profileId, string $listId): ?array
+{
+    if (!list_accessible_by_profile($db, $listId, $profileId)) {
+        return null;
+    }
+    $stmt = $db->prepare('SELECT * FROM lists WHERE id = ? LIMIT 1');
+    $stmt->execute([$listId]);
+    $row = $stmt->fetch();
+
+    return $row ? listWithItems($db, $row) : null;
+}
+
+function list_share_url(string $token): string
+{
+    return web_portal_base_url() . 'list-share.php?token=' . urlencode($token);
+}
+
+function get_list_by_share_token(PDO $db, string $token): ?array
+{
+    $token = trim($token);
+    if ($token === '') {
+        return null;
+    }
+
+    $stmt = $db->prepare('
+        SELECT * FROM lists
+        WHERE share_enabled = 1 AND share_token_hash = ?
+        LIMIT 1
+    ');
+    $stmt->execute([hash_web_login_token($token)]);
+    $row = $stmt->fetch();
+
+    return $row ? listWithItems($db, $row) : null;
+}
+
+/** @return string|null Plain-text share token */
+function enable_list_share(PDO $db, string $listId, string $profileId): ?string
+{
+    $stmt = $db->prepare('SELECT id FROM lists WHERE id = ? AND owner_id = ? LIMIT 1');
+    $stmt->execute([$listId, $profileId]);
+    if (!$stmt->fetch()) {
+        return null;
+    }
+
+    $token = new_web_login_token();
+    $db->prepare('
+        UPDATE lists
+        SET share_enabled = 1, share_token = ?, share_token_hash = ?, updated_at = ?
+        WHERE id = ? AND owner_id = ?
+    ')->execute([$token, hash_web_login_token($token), nowMs(), $listId, $profileId]);
+
+    return $token;
+}
+
+function get_list_share_token_for_owner(PDO $db, string $listId, string $profileId): ?string
+{
+    $stmt = $db->prepare('
+        SELECT share_token
+        FROM lists
+        WHERE id = ? AND owner_id = ? AND share_enabled = 1
+        LIMIT 1
+    ');
+    $stmt->execute([$listId, $profileId]);
+    $token = trim((string) ($stmt->fetchColumn() ?: ''));
+
+    return $token !== '' ? $token : null;
+}
+
+function disable_list_share(PDO $db, string $listId, string $profileId): bool
+{
+    $stmt = $db->prepare('
+        UPDATE lists
+        SET share_enabled = 0, share_token = NULL, share_token_hash = NULL, updated_at = ?
+        WHERE id = ? AND owner_id = ?
+    ');
+    $stmt->execute([nowMs(), $listId, $profileId]);
+
+    return $stmt->rowCount() > 0;
+}
+
+/**
+ * @return array{redirect:?string,error:?string,flash:?string}
+ */
+function process_grocery_list_item_post(
+    PDO $db,
+    string $listId,
+    array $list,
+    string $defaultCategoryId,
+    string $redirectUrl,
+    ?string $catalogProfileId = null,
+): array {
+    $action = $_POST['action'] ?? '';
+
+    if ($action === 'add_item') {
+        $name = trim($_POST['name'] ?? '');
+        $quantity = trim($_POST['quantity'] ?? '');
+        $category = trim($_POST['category'] ?? $defaultCategoryId);
+        if ($name === '') {
+            return ['redirect' => null, 'error' => 'Indtast et varenavn.', 'flash' => null];
+        }
+        upsert_list_item($db, $listId, newId(), [
+            'name'      => $name,
+            'quantity'  => $quantity !== '' ? $quantity : '1',
+            'category'  => $category,
+            'isChecked' => false,
+            'checkedAt' => null,
+        ]);
+        if ($catalogProfileId !== null && $catalogProfileId !== '') {
+            save_catalog_item_for_profile($db, $catalogProfileId, $name, $category);
+        }
+
+        return ['redirect' => $redirectUrl, 'error' => null, 'flash' => 'Varen er tilføjet.'];
+    }
+
+    if ($action === 'toggle_item') {
+        $itemId = trim($_POST['item_id'] ?? '');
+        foreach ($list['items'] as $candidate) {
+            if ($candidate['id'] !== $itemId) {
+                continue;
+            }
+            $checked = !empty($candidate['isChecked']);
+            upsert_list_item($db, $listId, $itemId, [
+                'name'        => $candidate['name'],
+                'quantity'    => $candidate['quantity'],
+                'category'    => $candidate['category'],
+                'isChecked'   => !$checked,
+                'checkedAt'   => !$checked ? nowMs() : null,
+                'weekday'     => $candidate['weekday'],
+                'price'       => $candidate['price'],
+                'supermarket' => $candidate['supermarket'],
+                'comment'     => $candidate['comment'],
+            ]);
+            break;
+        }
+
+        return ['redirect' => $redirectUrl, 'error' => null, 'flash' => null];
+    }
+
+    if ($action === 'delete_item') {
+        $itemId = trim($_POST['item_id'] ?? '');
+        if ($itemId !== '') {
+            $db->prepare('DELETE FROM items WHERE id = ? AND list_id = ?')->execute([$itemId, $listId]);
+            $db->prepare('UPDATE lists SET updated_at = ? WHERE id = ?')->execute([nowMs(), $listId]);
+        }
+
+        return ['redirect' => $redirectUrl, 'error' => null, 'flash' => null];
+    }
+
+    if ($action === 'clear_checked') {
+        $db->prepare('DELETE FROM items WHERE list_id = ? AND is_checked = 1')->execute([$listId]);
+        $db->prepare('UPDATE lists SET updated_at = ? WHERE id = ?')->execute([nowMs(), $listId]);
+
+        return ['redirect' => $redirectUrl, 'error' => null, 'flash' => 'Afkrydsede varer er fjernet.'];
+    }
+
+    return ['redirect' => null, 'error' => null, 'flash' => null];
+}
+
+/** @return list<array{id:string,name:string,orderIndex:int}> */
+function get_categories_for_profile(PDO $db, string $profileId): array
+{
+    $stmt = $db->prepare('SELECT * FROM categories WHERE profile_id = ? ORDER BY order_index ASC, id ASC');
+    $stmt->execute([$profileId]);
+
+    return array_map(static fn ($row) => [
+        'id'         => $row['id'],
+        'name'       => $row['name'],
+        'orderIndex' => (int) $row['order_index'],
+    ], $stmt->fetchAll());
+}
+
+function category_name_by_id(array $categories, string $categoryId): string
+{
+    foreach ($categories as $cat) {
+        if ($cat['id'] === $categoryId) {
+            return $cat['name'];
+        }
+    }
+
+    return $categoryId !== '' ? $categoryId : 'Andet';
+}
+
+/** @return list<array{title:string,items:list<array>}> */
+function group_list_items_by_category(array $items, array $categories, bool $checkedOnly = false): array
+{
+    $filtered = array_values(array_filter(
+        $items,
+        static fn ($item) => !empty($item['isChecked']) === $checkedOnly,
+    ));
+    if ($filtered === []) {
+        return [];
+    }
+
+    $byCategory = [];
+    foreach ($filtered as $item) {
+        $catId = (string) ($item['category'] ?? '');
+        $byCategory[$catId][] = $item;
+    }
+
+    $groups = [];
+    $seen = [];
+    foreach ($categories as $cat) {
+        $catId = $cat['id'];
+        if (empty($byCategory[$catId])) {
+            continue;
+        }
+        $groups[] = ['title' => $cat['name'], 'items' => $byCategory[$catId]];
+        $seen[$catId] = true;
+    }
+    foreach ($byCategory as $catId => $catItems) {
+        if (isset($seen[$catId])) {
+            continue;
+        }
+        $groups[] = [
+            'title' => category_name_by_id($categories, (string) $catId),
+            'items' => $catItems,
+        ];
+    }
+
+    return $groups;
+}
+
+/** @return list<array{id:string,name:string,category:string}> */
+function get_catalog_for_profile(PDO $db, string $profileId): array
+{
+    $stmt = $db->prepare('SELECT * FROM catalog_items WHERE profile_id = ? ORDER BY name ASC');
+    $stmt->execute([$profileId]);
+
+    return array_map(static fn ($row) => [
+        'id'       => $row['id'],
+        'name'     => $row['name'],
+        'category' => $row['category'] ?? '',
+    ], $stmt->fetchAll());
+}
+
+/** @return list<array{title:string,items:list<array{id:string,name:string,category:string}>}> */
+function group_catalog_by_category(array $items, array $categories): array
+{
+    if ($items === []) {
+        return [];
+    }
+
+    $byCategory = [];
+    foreach ($items as $item) {
+        $catId = (string) ($item['category'] ?? '');
+        $byCategory[$catId][] = $item;
+    }
+
+    $groups = [];
+    $seen = [];
+    foreach ($categories as $cat) {
+        $catId = $cat['id'];
+        if (empty($byCategory[$catId])) {
+            continue;
+        }
+        usort($byCategory[$catId], static fn ($a, $b) => strcasecmp($a['name'], $b['name']));
+        $groups[] = ['title' => $cat['name'], 'items' => $byCategory[$catId]];
+        $seen[$catId] = true;
+    }
+    foreach ($byCategory as $catId => $catItems) {
+        if (isset($seen[$catId])) {
+            continue;
+        }
+        usort($catItems, static fn ($a, $b) => strcasecmp($a['name'], $b['name']));
+        $groups[] = [
+            'title' => category_name_by_id($categories, (string) $catId),
+            'items' => $catItems,
+        ];
+    }
+
+    return $groups;
+}
+
+function save_catalog_item_for_profile(
+    PDO $db,
+    string $profileId,
+    string $name,
+    string $category,
+    ?string $id = null,
+): ?array {
+    $name = trim($name);
+    if ($name === '') {
+        return null;
+    }
+
+    $now = nowMs();
+
+    if ($id !== null && $id !== '') {
+        $db->prepare('
+            UPDATE catalog_items
+            SET name = ?, category = ?, updated_at = ?
+            WHERE id = ? AND profile_id = ?
+        ')->execute([$name, $category, $now, $id, $profileId]);
+
+        return ['id' => $id, 'name' => $name, 'category' => $category];
+    }
+
+    $stmt = $db->prepare('
+        SELECT id FROM catalog_items
+        WHERE profile_id = ? AND LOWER(name) = LOWER(?)
+        LIMIT 1
+    ');
+    $stmt->execute([$profileId, $name]);
+    $existingId = $stmt->fetchColumn();
+
+    if ($existingId) {
+        $db->prepare('
+            UPDATE catalog_items
+            SET category = ?, updated_at = ?
+            WHERE id = ? AND profile_id = ?
+        ')->execute([$category, $now, $existingId, $profileId]);
+
+        return ['id' => (string) $existingId, 'name' => $name, 'category' => $category];
+    }
+
+    $newId = newId();
+    $db->prepare('
+        INSERT INTO catalog_items (id, profile_id, name, category, updated_at)
+        VALUES (?,?,?,?,?)
+    ')->execute([$newId, $profileId, $name, $category, $now]);
+
+    return ['id' => $newId, 'name' => $name, 'category' => $category];
+}
+
+function delete_catalog_item_for_profile(PDO $db, string $profileId, string $id): bool
+{
+    $stmt = $db->prepare('DELETE FROM catalog_items WHERE id = ? AND profile_id = ?');
+    $stmt->execute([$id, $profileId]);
+
+    return $stmt->rowCount() > 0;
+}
+
+function create_list_for_profile(PDO $db, string $profileId, string $name): array
+{
+    $now = nowMs();
+    $id = newId();
+    $name = trim($name);
+    $db->prepare('INSERT INTO lists (id, name, owner_id, created_at, updated_at) VALUES (?,?,?,?,?)')
+        ->execute([$id, $name, $profileId, $now, $now]);
+    $db->prepare('INSERT INTO list_members (list_id, profile_id, joined_at) VALUES (?,?,?)')
+        ->execute([$id, $profileId, $now]);
+    $stmt = $db->prepare('SELECT * FROM lists WHERE id = ? LIMIT 1');
+    $stmt->execute([$id]);
+
+    return listWithItems($db, $stmt->fetch());
+}
+
+function upsert_list_item(PDO $db, string $listId, string $itemId, array $body): array
+{
+    $now = nowMs();
+    $db->prepare('
+        INSERT INTO items
+            (id, list_id, name, quantity, category, is_checked, checked_at, weekday, price, supermarket, comment, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        ON DUPLICATE KEY UPDATE
+            name = VALUES(name),
+            quantity = VALUES(quantity),
+            category = VALUES(category),
+            is_checked = VALUES(is_checked),
+            checked_at = VALUES(checked_at),
+            weekday = VALUES(weekday),
+            price = VALUES(price),
+            supermarket = VALUES(supermarket),
+            comment = VALUES(comment),
+            updated_at = VALUES(updated_at)
+    ')->execute([
+        $itemId,
+        $listId,
+        $body['name'],
+        $body['quantity'] ?? '',
+        $body['category'] ?? '',
+        !empty($body['isChecked']) ? 1 : 0,
+        $body['checkedAt'] ?? null,
+        $body['weekday'] ?? null,
+        $body['price'] ?? null,
+        $body['supermarket'] ?? null,
+        $body['comment'] ?? null,
+        $now,
+    ]);
+    $db->prepare('UPDATE lists SET updated_at = ? WHERE id = ?')->execute([$now, $listId]);
+    $stmt = $db->prepare('SELECT * FROM items WHERE id = ? AND list_id = ? LIMIT 1');
+    $stmt->execute([$itemId, $listId]);
+
+    return rowToItem($stmt->fetch());
 }
 
 function json_out(mixed $data, int $status = 200): never

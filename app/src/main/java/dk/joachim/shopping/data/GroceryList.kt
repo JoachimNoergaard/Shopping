@@ -7,6 +7,7 @@ data class GroceryList(
     val id: String,
     val name: String,
     val ownerId: String = "",
+    val shareEnabled: Boolean = false,
     val items: List<GroceryItem> = emptyList(),
     val createdAt: Long = System.currentTimeMillis(),
 )

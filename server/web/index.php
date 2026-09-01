@@ -59,7 +59,7 @@ render_header('Log ind');
 ?>
 <div class="card login-card">
     <h1>Opskrifter på web</h1>
-    <p class="subtitle">Log ind med samme e-mail som i ShoppingShark-appen. Vi sender et login-link til din indbakke.</p>
+    <p class="subtitle">Log ind med samme e-mail som i ShoppingShark-appen. Administrér opskrifter og indkøbslister i browseren.</p>
 
     <?php if ($success !== null): ?>
         <div class="alert alert-success"><?= h($success) ?></div>

@@ -104,6 +104,169 @@ function flash_get(string $key): ?string
     return $message;
 }
 
+function render_grocery_item_row(array $item): void
+{
+    $checked = !empty($item['isChecked']);
+    $quantity = trim((string) ($item['quantity'] ?? ''));
+    ?>
+    <li class="grocery-item<?= $checked ? ' is-checked' : '' ?>">
+        <form method="post" class="grocery-item-toggle">
+            <input type="hidden" name="action" value="toggle_item">
+            <input type="hidden" name="item_id" value="<?= h($item['id']) ?>">
+            <button type="submit" class="grocery-check-btn" aria-label="<?= $checked ? 'Fjern afkrydsning' : 'Afkræds' ?>">
+                <span class="grocery-check-box<?= $checked ? ' is-checked' : '' ?>" aria-hidden="true"></span>
+            </button>
+        </form>
+        <div class="grocery-item-body">
+            <span class="grocery-item-name"><?= h($item['name']) ?></span>
+            <?php if ($quantity !== ''): ?>
+                <span class="grocery-item-quantity"><?= h($quantity) ?></span>
+            <?php endif; ?>
+        </div>
+        <form method="post" class="grocery-item-delete">
+            <input type="hidden" name="action" value="delete_item">
+            <input type="hidden" name="item_id" value="<?= h($item['id']) ?>">
+            <button type="submit" class="btn btn-ghost btn-sm grocery-delete-btn" aria-label="Slet vare">×</button>
+        </form>
+    </li>
+    <?php
+}
+
+/** @param list<array{title:string,items:list<array>}> $uncheckedGroups */
+/** @param list<array{title:string,items:list<array>}> $checkedGroups */
+function render_grocery_list_sections(array $uncheckedGroups, array $checkedGroups): void
+{
+    if ($uncheckedGroups === [] && $checkedGroups === []) {
+        echo '<div class="card empty-state"><p>Listen er tom. Tilføj varer ovenfor.</p></div>';
+        return;
+    }
+
+    foreach ($uncheckedGroups as $group) {
+        echo '<section class="card grocery-category-section">';
+        echo '<h2 class="grocery-category-title">' . h($group['title']) . '</h2>';
+        echo '<ul class="grocery-items">';
+        foreach ($group['items'] as $item) {
+            render_grocery_item_row($item);
+        }
+        echo '</ul></section>';
+    }
+
+    if ($checkedGroups === []) {
+        return;
+    }
+
+    echo '<section class="card grocery-category-section grocery-checked-section">';
+    echo '<h2 class="grocery-category-title">Afkrydsede</h2>';
+    echo '<ul class="grocery-items">';
+    foreach ($checkedGroups as $group) {
+        foreach ($group['items'] as $item) {
+            render_grocery_item_row($item);
+        }
+    }
+    echo '</ul></section>';
+}
+
+function render_add_grocery_item_form(
+    array $categories,
+    string $defaultCategoryId,
+    array $catalogItems = [],
+): void {
+    ?>
+    <div class="card add-item-card">
+        <form method="post" class="add-item-form">
+            <input type="hidden" name="action" value="add_item">
+            <button type="button" class="add-item-close" aria-label="Luk tilføj vare">×</button>
+            <div class="add-item-primary">
+                <label class="visually-hidden" for="item-name">Tilføj vare</label>
+                <input
+                    type="text"
+                    id="item-name"
+                    name="name"
+                    required
+                    autocomplete="off"
+                    placeholder="Tilføj vare…"
+                    <?= $catalogItems !== [] ? 'list="catalog-suggestions"' : '' ?>
+                >
+                <?php if ($catalogItems !== []): ?>
+                    <datalist id="catalog-suggestions">
+                        <?php foreach ($catalogItems as $item): ?>
+                            <option value="<?= h($item['name']) ?>"></option>
+                        <?php endforeach; ?>
+                    </datalist>
+                <?php endif; ?>
+            </div>
+            <div class="add-item-details">
+                <div class="add-item-field">
+                    <label for="item-quantity">Mængde</label>
+                    <input type="text" id="item-quantity" name="quantity" placeholder="1">
+                </div>
+                <?php if ($categories !== []): ?>
+                    <div class="add-item-field">
+                        <label for="item-category">Kategori</label>
+                        <select id="item-category" name="category">
+                            <?php foreach ($categories as $cat): ?>
+                                <option value="<?= h($cat['id']) ?>" <?= $cat['id'] === $defaultCategoryId ? 'selected' : '' ?>>
+                                    <?= h($cat['name']) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                <?php endif; ?>
+                <button type="submit" class="btn btn-primary add-item-submit">Tilføj</button>
+            </div>
+        </form>
+    </div>
+    <script>
+    (function () {
+        var form = document.querySelector('.add-item-form');
+        if (!form) return;
+
+        var closeBtn = form.querySelector('.add-item-close');
+        var nameInput = form.querySelector('#item-name');
+        var quantityInput = form.querySelector('#item-quantity');
+
+        if (closeBtn && nameInput) {
+            closeBtn.addEventListener('click', function () {
+                form.classList.add('is-collapsed');
+                nameInput.value = '';
+                if (quantityInput) quantityInput.value = '';
+                nameInput.blur();
+            });
+
+            nameInput.addEventListener('focus', function () {
+                form.classList.remove('is-collapsed');
+            });
+        }
+
+        <?php if ($catalogItems !== [] && $categories !== []): ?>
+        var catalog = <?= json_encode(array_map(static fn ($item) => [
+            'name' => $item['name'],
+            'category' => $item['category'] ?? '',
+        ], $catalogItems), JSON_UNESCAPED_UNICODE) ?>;
+        var categorySelect = document.getElementById('item-category');
+
+        function applyCatalogCategory() {
+            if (!nameInput || !categorySelect) return;
+            var value = nameInput.value.trim().toLowerCase();
+            if (value === '') return;
+            for (var i = 0; i < catalog.length; i++) {
+                if (catalog[i].name.toLowerCase() === value && catalog[i].category) {
+                    categorySelect.value = catalog[i].category;
+                    return;
+                }
+            }
+        }
+
+        if (nameInput && categorySelect) {
+            nameInput.addEventListener('change', applyCatalogCategory);
+            nameInput.addEventListener('blur', applyCatalogCategory);
+        }
+        <?php endif; ?>
+    })();
+    </script>
+    <?php
+}
+
 function render_header(string $title, ?array $profile = null): void
 {
     $fullTitle = $title . ' · CookingShark';
@@ -117,6 +280,11 @@ function render_header(string $title, ?array $profile = null): void
     echo '<a class="brand" href="' . h($brandHref) . '"><img class="brand-icon" src="assets/shopingsharkIcon.png" alt="">CookingShark</a>';
     if ($profile !== null) {
         echo '<nav class="header-nav">';
+        echo '<div class="header-links">';
+        echo '<a href="recipes.php" class="header-link">Opskrifter</a>';
+        echo '<a href="lists.php" class="header-link">Indkøbslister</a>';
+        echo '<a href="catalog.php" class="header-link">Varer</a>';
+        echo '</div>';
         echo '<span class="user-label">' . h($profile['name'] !== '' ? $profile['name'] : $profile['email']) . '</span>';
         echo '<a href="logout.php" class="btn btn-ghost btn-sm" data-logout-link>Log ud</a>';
         echo '</nav>';
@@ -131,7 +299,7 @@ function render_header(string $title, ?array $profile = null): void
 function render_footer(bool $includeEditorJs = false): void
 {
     echo '</main><footer class="site-footer"><div class="container">';
-    echo '<p>Opskrifter du gemmer her synkroniseres automatisk til ShoppingShark-appen.</p>';
+    echo '<p>Indkøbslister og opskrifter du gemmer her synkroniseres automatisk til ShoppingShark-appen.</p>';
     echo '</div></footer>';
     echo '<script src="assets/device-storage.js"></script>';
     if ($includeEditorJs) {

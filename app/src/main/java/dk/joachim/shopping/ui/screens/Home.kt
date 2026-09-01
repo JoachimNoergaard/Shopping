@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Restaurant
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -45,6 +46,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -58,6 +60,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
@@ -319,12 +322,19 @@ fun GroceryListsScreen(
 
     uiState.editingList?.let { list ->
         val isOwner = list.ownerId == uiState.currentProfileId
+        val context = LocalContext.current
         EditListDialog(
             name = uiState.editListName,
             isOwner = isOwner,
             originalName = list.name,
+            shareEnabled = uiState.editShareEnabled,
+            shareUrl = uiState.editShareUrl,
+            shareLoading = uiState.editShareLoading,
             onNameChange = viewModel::updateEditListName,
             onSave = viewModel::saveEditedListName,
+            onShareEnabledChange = viewModel::setEditListShareEnabled,
+            onShareLink = { viewModel.shareEditListLink(context) },
+            onCopyLink = { viewModel.copyEditListLink(context) },
             onDeleteRequest = viewModel::requestDeleteFromEditDialog,
             onDismiss = viewModel::dismissEditListDialog
         )
@@ -480,8 +490,14 @@ private fun EditListDialog(
     name: String,
     isOwner: Boolean,
     originalName: String,
+    shareEnabled: Boolean,
+    shareUrl: String?,
+    shareLoading: Boolean,
     onNameChange: (String) -> Unit,
     onSave: () -> Unit,
+    onShareEnabledChange: (Boolean) -> Unit,
+    onShareLink: () -> Unit,
+    onCopyLink: () -> Unit,
     onDeleteRequest: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -510,6 +526,61 @@ private fun EditListDialog(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+                if (isOwner) {
+                    HorizontalDivider()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Del med link",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                text = "Alle med linket kan se og redigere listen i browseren.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (shareLoading) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Switch(
+                                checked = shareEnabled,
+                                onCheckedChange = onShareEnabledChange,
+                            )
+                        }
+                    }
+                    if (shareEnabled) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            TextButton(
+                                onClick = onShareLink,
+                                enabled = !shareLoading,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Share,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Del link")
+                            }
+                            TextButton(
+                                onClick = onCopyLink,
+                                enabled = !shareLoading && !shareUrl.isNullOrBlank(),
+                            ) {
+                                Text("Kopiér")
+                            }
+                        }
+                    }
                 }
                 TextButton(
                     onClick = onDeleteRequest,

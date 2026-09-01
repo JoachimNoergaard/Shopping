@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import coil.imageLoader
 import coil.memory.MemoryCache
+import dk.joachim.shopping.data.network.ListShareResponse
 import dk.joachim.shopping.data.network.PatchListRequest
 import dk.joachim.shopping.data.network.RemoteDataSource
 
@@ -925,6 +926,25 @@ object ShoppingRepository {
         saveLists(_lists.value)
         val profileId = getOrCreateProfileId()
         scope.launch { RemoteDataSource.removeListMember(id, profileId) }
+    }
+
+    suspend fun getListShare(listId: String): ListShareResponse? {
+        val profileId = getOrCreateProfileId()
+        return RemoteDataSource.getListShare(listId, profileId)
+    }
+
+    suspend fun enableListShare(listId: String): ListShareResponse? {
+        val profileId = getOrCreateProfileId()
+        val response = RemoteDataSource.enableListShare(listId, profileId) ?: return null
+        updateList(listId) { it.copy(shareEnabled = response.shareEnabled) }
+        return response
+    }
+
+    suspend fun disableListShare(listId: String): ListShareResponse? {
+        val profileId = getOrCreateProfileId()
+        val response = RemoteDataSource.disableListShare(listId, profileId) ?: return null
+        updateList(listId) { it.copy(shareEnabled = false) }
+        return response
     }
 
     /**

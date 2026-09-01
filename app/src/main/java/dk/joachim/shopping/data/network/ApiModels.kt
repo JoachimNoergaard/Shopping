@@ -15,11 +15,28 @@ data class ApiList(
     val id: String,
     val name: String,
     val ownerId: String = "",
+    val shareEnabled: Boolean = false,
     val createdAt: Long,
     val items: List<GroceryItem> = emptyList(),
 ) {
-    fun toGroceryList() = GroceryList(id = id, name = name, ownerId = ownerId, items = items, createdAt = createdAt)
+    fun toGroceryList() = GroceryList(
+        id = id,
+        name = name,
+        ownerId = ownerId,
+        shareEnabled = shareEnabled,
+        items = items,
+        createdAt = createdAt,
+    )
 }
+
+@Serializable
+data class ListShareRequest(val profileId: String)
+
+@Serializable
+data class ListShareResponse(
+    val shareEnabled: Boolean,
+    val shareUrl: String? = null,
+)
 
 @Serializable
 data class CreateListRequest(val id: String, val name: String, val ownerId: String, val createdAt: Long)
