@@ -5,9 +5,11 @@ require_once __DIR__ . '/bootstrap.php';
 
 $profile = require_login();
 $error = '';
+$submittedName = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $name = trim($_POST['name'] ?? '');
+    $submittedName = $name;
     if ($name === '') {
         $error = 'Indtast et navn til listen.';
     } else {
@@ -25,6 +27,9 @@ render_header('Indkøbslister', $profile);
 ?>
 <div class="page-header-row">
     <h1 class="page-title">Indkøbslister</h1>
+    <div class="page-toolbar">
+        <button type="button" class="btn btn-primary" id="open-create-list-dialog">Opret liste</button>
+    </div>
 </div>
 
 <p class="page-intro">Dine indkøbslister fra ShoppingShark-appen. Ændringer her synkroniseres automatisk.</p>
@@ -36,21 +41,10 @@ render_header('Indkøbslister', $profile);
     <div class="alert alert-error"><?= h($error) ?></div>
 <?php endif; ?>
 
-<div class="card">
-    <h2>Opret ny liste</h2>
-    <form method="post" class="form-grid inline-form">
-        <div>
-            <label for="list-name">Navn</label>
-            <input type="text" id="list-name" name="name" required placeholder="Fx ugeindkøb">
-        </div>
-        <button type="submit" class="btn btn-primary">Opret liste</button>
-    </form>
-</div>
-
 <?php if ($lists === []): ?>
     <div class="card empty-state">
         <p>Du har ingen indkøbslister endnu.</p>
-        <p>Opret en liste her, eller brug ShoppingShark-appen på telefonen.</p>
+        <p><button type="button" class="btn btn-primary" data-open-create-list-dialog>Opret din første liste</button></p>
     </div>
 <?php else: ?>
     <ul class="grocery-list-overview">
@@ -84,6 +78,74 @@ render_header('Indkøbslister', $profile);
         <?php endforeach; ?>
     </ul>
 <?php endif; ?>
+
+<dialog class="app-dialog" id="create-list-dialog" aria-labelledby="create-list-dialog-title">
+    <form method="post" class="dialog-form">
+        <h2 id="create-list-dialog-title">Opret ny liste</h2>
+        <div>
+            <label for="list-name">Navn</label>
+            <input
+                type="text"
+                id="list-name"
+                name="name"
+                required
+                placeholder="Fx ugeindkøb"
+                value="<?= h($submittedName) ?>"
+                autocomplete="off"
+            >
+        </div>
+        <div class="dialog-actions">
+            <button type="button" class="btn btn-ghost" data-dialog-close>Annuller</button>
+            <button type="submit" class="btn btn-primary">Opret</button>
+        </div>
+    </form>
+</dialog>
+
+<script>
+(function () {
+    var dialog = document.getElementById('create-list-dialog');
+    var nameInput = document.getElementById('list-name');
+    if (!dialog) return;
+
+    function openDialog() {
+        dialog.showModal();
+        if (nameInput) {
+            window.setTimeout(function () {
+                nameInput.focus();
+                nameInput.select();
+            }, 0);
+        }
+    }
+
+    function closeDialog() {
+        dialog.close();
+    }
+
+    document.querySelectorAll('#open-create-list-dialog, [data-open-create-list-dialog]').forEach(function (button) {
+        button.addEventListener('click', openDialog);
+    });
+
+    dialog.querySelectorAll('[data-dialog-close]').forEach(function (button) {
+        button.addEventListener('click', closeDialog);
+    });
+
+    dialog.addEventListener('click', function (event) {
+        if (event.target === dialog) {
+            closeDialog();
+        }
+    });
+
+    dialog.addEventListener('close', function () {
+        if (nameInput && !<?= $error !== '' ? 'true' : 'false' ?>) {
+            nameInput.value = '';
+        }
+    });
+
+    <?php if ($error !== ''): ?>
+    openDialog();
+    <?php endif; ?>
+})();
+</script>
 
 <?php
 render_footer();

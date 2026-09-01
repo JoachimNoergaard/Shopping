@@ -454,6 +454,29 @@ function get_list_share_token_for_owner(PDO $db, string $listId, string $profile
     return $token !== '' ? $token : null;
 }
 
+/** Returns a copyable share URL for the owner, creating a stored token if missing. */
+function get_list_share_link_for_owner(PDO $db, string $listId, string $profileId): ?string
+{
+    $stmt = $db->prepare('
+        SELECT share_enabled, share_token
+        FROM lists
+        WHERE id = ? AND owner_id = ?
+        LIMIT 1
+    ');
+    $stmt->execute([$listId, $profileId]);
+    $row = $stmt->fetch();
+    if (!$row || empty($row['share_enabled'])) {
+        return null;
+    }
+
+    $token = trim((string) ($row['share_token'] ?? ''));
+    if ($token === '') {
+        $token = enable_list_share($db, $listId, $profileId) ?? '';
+    }
+
+    return $token !== '' ? list_share_url($token) : null;
+}
+
 function disable_list_share(PDO $db, string $listId, string $profileId): bool
 {
     $stmt = $db->prepare('
@@ -467,7 +490,7 @@ function disable_list_share(PDO $db, string $listId, string $profileId): bool
 }
 
 /**
- * @return array{redirect:?string,error:?string,flash:?string}
+ * @return array{redirect:?string,error:?string,flash:?string,quantity:?string,itemId:?string}
  */
 function process_grocery_list_item_post(
     PDO $db,
@@ -482,9 +505,12 @@ function process_grocery_list_item_post(
     if ($action === 'add_item') {
         $name = trim($_POST['name'] ?? '');
         $quantity = trim($_POST['quantity'] ?? '');
-        $category = trim($_POST['category'] ?? $defaultCategoryId);
+        $category = trim($_POST['category'] ?? '');
         if ($name === '') {
             return ['redirect' => null, 'error' => 'Indtast et varenavn.', 'flash' => null];
+        }
+        if ($category === '') {
+            return ['redirect' => null, 'error' => 'Vælg en kategori.', 'flash' => null];
         }
         upsert_list_item($db, $listId, newId(), [
             'name'      => $name,
@@ -532,6 +558,41 @@ function process_grocery_list_item_post(
         }
 
         return ['redirect' => $redirectUrl, 'error' => null, 'flash' => null];
+    }
+
+    if ($action === 'adjust_quantity') {
+        $itemId = trim($_POST['item_id'] ?? '');
+        $delta = (int) ($_POST['delta'] ?? 0);
+        if ($delta === 0) {
+            return ['redirect' => null, 'error' => null, 'flash' => null, 'quantity' => null, 'itemId' => null];
+        }
+        foreach ($list['items'] as $candidate) {
+            if ($candidate['id'] !== $itemId) {
+                continue;
+            }
+            $newQuantity = adjust_item_quantity_string((string) ($candidate['quantity'] ?? ''), $delta);
+            upsert_list_item($db, $listId, $itemId, [
+                'name'        => $candidate['name'],
+                'quantity'    => $newQuantity,
+                'category'    => $candidate['category'],
+                'isChecked'   => !empty($candidate['isChecked']),
+                'checkedAt'   => $candidate['checkedAt'] ?? null,
+                'weekday'     => $candidate['weekday'],
+                'price'       => $candidate['price'],
+                'supermarket' => $candidate['supermarket'],
+                'comment'     => $candidate['comment'],
+            ]);
+
+            return [
+                'redirect' => null,
+                'error'    => null,
+                'flash'    => null,
+                'quantity' => $newQuantity,
+                'itemId'   => $itemId,
+            ];
+        }
+
+        return ['redirect' => null, 'error' => null, 'flash' => null, 'quantity' => null, 'itemId' => null];
     }
 
     if ($action === 'clear_checked') {
@@ -585,6 +646,14 @@ function group_list_items_by_category(array $items, array $categories, bool $che
         $byCategory[$catId][] = $item;
     }
 
+    foreach ($byCategory as &$catItems) {
+        usort(
+            $catItems,
+            static fn ($a, $b) => strcasecmp((string) ($a['name'] ?? ''), (string) ($b['name'] ?? '')),
+        );
+    }
+    unset($catItems);
+
     $groups = [];
     $seen = [];
     foreach ($categories as $cat) {
@@ -606,6 +675,27 @@ function group_list_items_by_category(array $items, array $categories, bool $che
     }
 
     return $groups;
+}
+
+function adjust_item_quantity_string(string $quantity, int $delta): string
+{
+    $trimmed = trim($quantity);
+    if ($trimmed === '') {
+        return (string) max(1, 1 + $delta);
+    }
+
+    if (!preg_match('/^(\d+(?:[.,]\d+)?)\s*(.*)$/u', $trimmed, $match)) {
+        return $trimmed;
+    }
+
+    $num = (float) str_replace(',', '.', $match[1]);
+    $unit = trim($match[2]);
+    $newNum = max(1.0, $num + $delta);
+    $formatted = fmod($newNum, 1.0) === 0.0
+        ? (string) (int) $newNum
+        : rtrim(rtrim(number_format($newNum, 2, '.', ''), '0'), '.');
+
+    return $unit === '' ? $formatted : $formatted . ' ' . $unit;
 }
 
 /** @return list<array{id:string,name:string,category:string}> */

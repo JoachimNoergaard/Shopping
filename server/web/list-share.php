@@ -26,19 +26,13 @@ if ($list === null) {
 $listId = $list['id'];
 $categories = get_categories_for_profile($db, $list['ownerId']);
 $catalogItems = get_catalog_for_profile($db, $list['ownerId']);
-$defaultCategoryId = $categories[0]['id'] ?? '';
 $redirectUrl = 'list-share.php?token=' . urlencode($token);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $result = process_grocery_list_item_post($db, $listId, $list, $defaultCategoryId, $redirectUrl);
-    if ($result['error'] !== null) {
-        $error = $result['error'];
-    } elseif ($result['redirect'] !== null) {
-        if ($result['flash'] !== null) {
-            flash_set('success', $result['flash']);
-        }
-        header('Location: ' . $result['redirect']);
-        exit;
+    $result = process_grocery_list_item_post($db, $listId, $list, '', $redirectUrl);
+    $itemError = respond_grocery_list_item_result($result, $redirectUrl);
+    if ($itemError !== null) {
+        $error = $itemError;
     }
 
     $list = get_list_by_share_token($db, $token);
@@ -80,9 +74,10 @@ render_header($list['name']);
     <div class="alert alert-error"><?= h($error) ?></div>
 <?php endif; ?>
 
-<?php render_add_grocery_item_form($categories, $defaultCategoryId, $catalogItems); ?>
+<?php render_add_grocery_item_form($categories, $catalogItems, $token); ?>
 
-<?php render_grocery_list_sections($uncheckedGroups, $checkedGroups); ?>
+<?php render_grocery_list_sections($uncheckedGroups, $checkedGroups, $token); ?>
 
 <?php
+render_grocery_qty_script($redirectUrl, $token);
 render_footer();

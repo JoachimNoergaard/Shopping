@@ -21,7 +21,7 @@ header('Cache-Control: no-store');
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Logger ind · CookingShark</title>
+    <title>Logger ind · ShoppingShark</title>
 </head>
 <body>
 <script src="assets/device-storage.js"></script>

@@ -30,7 +30,7 @@ $redirectUrl = 'list.php?id=' . urlencode($id);
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
-    if (in_array($action, ['add_item', 'toggle_item', 'delete_item', 'clear_checked'], true)) {
+    if (in_array($action, ['add_item', 'toggle_item', 'delete_item', 'adjust_quantity', 'clear_checked'], true)) {
         $result = process_grocery_list_item_post(
             $db,
             $id,
@@ -39,14 +39,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $redirectUrl,
             $profile['id'],
         );
-        if ($result['error'] !== null) {
-            $error = $result['error'];
-        } elseif ($result['redirect'] !== null) {
-            if ($result['flash'] !== null) {
-                flash_set('success', $result['flash']);
-            }
-            header('Location: ' . $result['redirect']);
-            exit;
+        $itemError = respond_grocery_list_item_result($result, $redirectUrl);
+        if ($itemError !== null) {
+            $error = $itemError;
         }
     } elseif ($action === 'rename' && $isOwner) {
         $name = trim($_POST['name'] ?? '');
@@ -101,10 +96,9 @@ $checkedGroups = group_list_items_by_category($list['items'], $categories, true)
 $checkedCount = count(array_filter($list['items'], static fn ($item) => !empty($item['isChecked'])));
 $success = flash_get('success');
 $shareEnabled = !empty($list['shareEnabled']);
-$shareToken = $isOwner && $shareEnabled
-    ? get_list_share_token_for_owner($db, $id, $profile['id'])
+$shareLink = $isOwner && $shareEnabled
+    ? get_list_share_link_for_owner($db, $id, $profile['id'])
     : null;
-$shareLink = $shareToken !== null ? list_share_url($shareToken) : null;
 
 render_header($list['name'], $profile);
 ?>
@@ -129,7 +123,7 @@ render_header($list['name'], $profile);
     <div class="alert alert-error"><?= h($error) ?></div>
 <?php endif; ?>
 
-<?php render_add_grocery_item_form($categories, $defaultCategoryId, $catalogItems); ?>
+<?php render_add_grocery_item_form($categories, $catalogItems); ?>
 
 <?php render_grocery_list_sections($uncheckedGroups, $checkedGroups); ?>
 
@@ -155,6 +149,7 @@ render_header($list['name'], $profile);
                             <input type="text" id="share-link" class="share-link-input" readonly value="<?= h($shareLink) ?>">
                             <button type="button" class="btn btn-ghost btn-sm" data-copy-target="share-link">Kopiér</button>
                         </div>
+                        <p class="field-hint">Linket er altid det samme, indtil du opretter et nyt.</p>
                     </div>
                 <?php else: ?>
                     <p class="field-hint">Deling er aktiv, men linket mangler. Opret et nyt link for at dele listen.</p>
@@ -211,4 +206,5 @@ document.querySelectorAll('[data-copy-target]').forEach(function (button) {
 </script>
 
 <?php
+render_grocery_qty_script($redirectUrl);
 render_footer();

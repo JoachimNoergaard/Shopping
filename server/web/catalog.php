@@ -15,6 +15,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $category = trim($_POST['category'] ?? '');
         if ($name === '') {
             $error = 'Indtast et varenavn.';
+        } elseif ($category === '') {
+            $error = 'Vælg en kategori.';
         } else {
             save_catalog_item_for_profile($db, $profile['id'], $name, $category);
             flash_set('success', 'Varen er tilføjet.');
@@ -27,6 +29,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $category = trim($_POST['category'] ?? '');
         if ($id === '' || $name === '') {
             $error = 'Indtast et varenavn.';
+        } elseif ($category === '') {
+            $error = 'Vælg en kategori.';
         } else {
             save_catalog_item_for_profile($db, $profile['id'], $name, $category, $id);
             flash_set('success', 'Varen er opdateret.');
@@ -46,7 +50,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $catalog = get_catalog_for_profile($db, $profile['id']);
 $categories = get_categories_for_profile($db, $profile['id']);
-$defaultCategoryId = $categories[0]['id'] ?? '';
 $groups = group_catalog_by_category($catalog, $categories);
 $success = flash_get('success');
 
@@ -97,10 +100,13 @@ render_header('Varer', $profile);
         <?php if ($categories !== []): ?>
             <div>
                 <label for="catalog-category">Kategori</label>
-                <select id="catalog-category" name="category">
+                <select id="catalog-category" name="category" required>
+                    <?php if ($editingItem === null): ?>
+                        <option value="" selected disabled>Vælg kategori</option>
+                    <?php endif; ?>
                     <?php foreach ($categories as $cat): ?>
                         <?php
-                        $selectedCategory = $editingItem['category'] ?? $defaultCategoryId;
+                        $selectedCategory = $editingItem['category'] ?? '';
                         ?>
                         <option value="<?= h($cat['id']) ?>" <?= $cat['id'] === $selectedCategory ? 'selected' : '' ?>>
                             <?= h($cat['name']) ?>

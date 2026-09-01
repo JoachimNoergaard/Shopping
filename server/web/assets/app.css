@@ -130,6 +130,36 @@ h1, h2, h3 { margin-top: 0; }
     margin-left: auto;
 }
 
+.app-dialog {
+    width: min(100% - 2rem, 420px);
+    padding: 0;
+    border: none;
+    border-radius: var(--radius);
+    box-shadow: 0 16px 48px rgba(26, 43, 60, 0.18);
+}
+
+.app-dialog::backdrop {
+    background: rgba(26, 43, 60, 0.35);
+}
+
+.dialog-form {
+    padding: 1.25rem 1.35rem 1.35rem;
+    display: grid;
+    gap: 1rem;
+}
+
+.dialog-form h2 {
+    margin: 0;
+    font-size: 1.25rem;
+}
+
+.dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
 .recipe-list-controls {
     margin-bottom: 1rem;
     display: grid;
@@ -639,7 +669,6 @@ button.btn {
 }
 
 .add-item-card {
-    position: relative;
     padding-top: 0.85rem;
     padding-bottom: 0.85rem;
 }
@@ -648,11 +677,60 @@ button.btn {
     display: block;
 }
 
-.add-item-close {
+.add-item-primary {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.35rem;
+}
+
+.add-item-name-wrap {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+}
+
+.add-item-primary input {
+    width: 100%;
+    border-color: transparent;
+    background: transparent;
+    padding-left: 0.15rem;
+    padding-right: 0.15rem;
+    font-size: 1rem;
+}
+
+.add-item-suggestions {
     position: absolute;
-    top: 0.45rem;
-    right: 0.35rem;
-    z-index: 1;
+    top: calc(100% + 0.25rem);
+    left: 0;
+    right: 0;
+    z-index: 20;
+    list-style: none;
+    margin: 0;
+    padding: 0.25rem 0;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(26, 43, 60, 0.12);
+    max-height: 12rem;
+    overflow-y: auto;
+}
+
+.add-item-suggestions[hidden] {
+    display: none;
+}
+
+.add-item-suggestion {
+    padding: 0.55rem 0.75rem;
+    cursor: pointer;
+}
+
+.add-item-suggestion:hover {
+    background: rgba(70, 18, 100, 0.06);
+}
+
+.add-item-close {
+    flex-shrink: 0;
+    margin-top: 0.1rem;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -688,25 +766,15 @@ button.btn {
     pointer-events: none;
 }
 
-.add-item-primary input {
-    border-color: transparent;
-    background: transparent;
-    padding-left: 0.15rem;
-    padding-right: 0.15rem;
-    font-size: 1rem;
-}
-
 .add-item-form:focus-within .add-item-primary input,
 .add-item-form:has(input[name="name"]:not(:placeholder-shown)) .add-item-primary input {
     border-color: var(--border);
     background: #fff;
-    padding-right: 2.25rem;
 }
 
 .add-item-form.is-collapsed .add-item-primary input {
     border-color: transparent;
     background: transparent;
-    padding-right: 0.15rem;
 }
 
 .add-item-form.is-collapsed .add-item-details {
@@ -835,6 +903,47 @@ button.btn {
 .grocery-item-toggle,
 .grocery-item-delete {
     margin: 0;
+}
+
+.grocery-item-qty-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.1rem;
+    flex-shrink: 0;
+    margin-left: 0.25rem;
+}
+
+.grocery-item-qty-controls .grocery-item-quantity {
+    min-width: 1.75rem;
+    padding: 0 0.35rem;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.grocery-qty-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: #fff;
+    color: var(--primary);
+    font: inherit;
+    font-size: 1.15rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.grocery-qty-btn:hover {
+    background: rgba(70, 18, 100, 0.06);
+}
+
+.grocery-qty-btn:disabled {
+    opacity: 0.5;
+    cursor: wait;
 }
 
 .grocery-check-btn {
