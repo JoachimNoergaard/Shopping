@@ -160,6 +160,21 @@ h1, h2, h3 { margin-top: 0; }
     flex-wrap: wrap;
 }
 
+.dialog-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.dialog-header-row h2 {
+    margin: 0;
+}
+
+.list-settings-dialog {
+    width: min(100% - 2rem, 520px);
+}
+
 .recipe-list-controls {
     margin-bottom: 1rem;
     display: grid;
@@ -1013,7 +1028,7 @@ button.btn {
 }
 
 .list-settings {
-    margin-top: 1rem;
+    margin-top: 0;
 }
 
 .list-share-settings {

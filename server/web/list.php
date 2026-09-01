@@ -6,6 +6,7 @@ require_once __DIR__ . '/bootstrap.php';
 $profile = require_login();
 $id = trim($_GET['id'] ?? '');
 $error = '';
+$openSettingsDialog = false;
 
 if ($id === '') {
     header('Location: lists.php');
@@ -47,6 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $name = trim($_POST['name'] ?? '');
         if ($name === '') {
             $error = 'Indtast et navn.';
+            $openSettingsDialog = true;
         } else {
             $db->prepare('UPDATE lists SET name = ?, updated_at = ? WHERE id = ?')
                 ->execute([$name, nowMs(), $id]);
@@ -113,6 +115,7 @@ render_header($list['name'], $profile);
                 <button type="submit" class="btn btn-ghost btn-sm">Ryd afkrydsede</button>
             </form>
         <?php endif; ?>
+        <button type="button" class="btn btn-ghost btn-sm" id="open-list-settings-dialog">Indstillinger</button>
     </div>
 </div>
 
@@ -127,82 +130,120 @@ render_header($list['name'], $profile);
 
 <?php render_grocery_list_sections($uncheckedGroups, $checkedGroups); ?>
 
-<div class="card list-settings">
-    <h2>Listeindstillinger</h2>
-    <?php if ($isOwner): ?>
-        <form method="post" class="form-grid inline-form">
-            <input type="hidden" name="action" value="rename">
-            <div>
-                <label for="list-rename">Navn</label>
-                <input type="text" id="list-rename" name="name" required value="<?= h($list['name']) ?>">
-            </div>
-            <button type="submit" class="btn btn-ghost">Gem navn</button>
-        </form>
-
-        <div class="list-share-settings">
-            <h3>Del med link</h3>
-            <?php if ($shareEnabled): ?>
-                <?php if ($shareLink !== null): ?>
-                    <div class="share-link-box">
-                        <label for="share-link">Delingslink</label>
-                        <div class="share-link-row">
-                            <input type="text" id="share-link" class="share-link-input" readonly value="<?= h($shareLink) ?>">
-                            <button type="button" class="btn btn-ghost btn-sm" data-copy-target="share-link">Kopiér</button>
-                        </div>
-                        <p class="field-hint">Linket er altid det samme, indtil du opretter et nyt.</p>
-                    </div>
-                <?php else: ?>
-                    <p class="field-hint">Deling er aktiv, men linket mangler. Opret et nyt link for at dele listen.</p>
-                <?php endif; ?>
-                <div class="share-link-actions">
-                    <form method="post" class="inline-form">
-                        <input type="hidden" name="action" value="regenerate_share">
-                        <button type="submit" class="btn btn-ghost btn-sm">Nyt delingslink</button>
-                    </form>
-                    <form method="post" class="inline-form">
-                        <input type="hidden" name="action" value="disable_share">
-                        <button type="submit" class="btn btn-ghost btn-sm">Slå deling fra</button>
-                    </form>
-                </div>
-            <?php else: ?>
-                <p class="field-hint">Giv adgang til listen uden login via et hemmeligt link.</p>
-                <form method="post" class="inline-form">
-                    <input type="hidden" name="action" value="enable_share">
-                    <button type="submit" class="btn btn-ghost btn-sm">Aktivér deling</button>
-                </form>
-            <?php endif; ?>
+<dialog class="app-dialog list-settings-dialog" id="list-settings-dialog" aria-labelledby="list-settings-dialog-title">
+    <div class="dialog-form list-settings">
+        <div class="dialog-header-row">
+            <h2 id="list-settings-dialog-title">Listeindstillinger</h2>
+            <button type="button" class="btn btn-ghost btn-sm" data-dialog-close aria-label="Luk">×</button>
         </div>
 
-        <form method="post" class="list-danger-action" onsubmit="return confirm('Slet denne liste permanent? Den fjernes også for andre medlemmer.');">
-            <input type="hidden" name="action" value="delete">
-            <button type="submit" class="btn btn-danger">Slet liste</button>
-        </form>
-    <?php else: ?>
-        <p class="field-hint">Dette er en delt liste. Du kan forlade den, men ikke slette den.</p>
-        <form method="post" class="list-danger-action" onsubmit="return confirm('Forlad denne liste?');">
-            <input type="hidden" name="action" value="leave">
-            <button type="submit" class="btn btn-ghost">Forlad liste</button>
-        </form>
-    <?php endif; ?>
-</div>
+        <?php if ($isOwner): ?>
+            <form method="post" class="form-grid inline-form">
+                <input type="hidden" name="action" value="rename">
+                <div>
+                    <label for="list-rename">Navn</label>
+                    <input type="text" id="list-rename" name="name" required value="<?= h($list['name']) ?>">
+                </div>
+                <button type="submit" class="btn btn-ghost">Gem navn</button>
+            </form>
+
+            <div class="list-share-settings">
+                <h3>Del med link</h3>
+                <?php if ($shareEnabled): ?>
+                    <?php if ($shareLink !== null): ?>
+                        <div class="share-link-box">
+                            <label for="share-link">Delingslink</label>
+                            <div class="share-link-row">
+                                <input type="text" id="share-link" class="share-link-input" readonly value="<?= h($shareLink) ?>">
+                                <button type="button" class="btn btn-ghost btn-sm" data-copy-target="share-link">Kopiér</button>
+                            </div>
+                            <p class="field-hint">Linket er altid det samme, indtil du opretter et nyt.</p>
+                        </div>
+                    <?php else: ?>
+                        <p class="field-hint">Deling er aktiv, men linket mangler. Opret et nyt link for at dele listen.</p>
+                    <?php endif; ?>
+                    <div class="share-link-actions">
+                        <form method="post" class="inline-form">
+                            <input type="hidden" name="action" value="regenerate_share">
+                            <button type="submit" class="btn btn-ghost btn-sm">Nyt delingslink</button>
+                        </form>
+                        <form method="post" class="inline-form">
+                            <input type="hidden" name="action" value="disable_share">
+                            <button type="submit" class="btn btn-ghost btn-sm">Slå deling fra</button>
+                        </form>
+                    </div>
+                <?php else: ?>
+                    <p class="field-hint">Giv adgang til listen uden login via et hemmeligt link.</p>
+                    <form method="post" class="inline-form">
+                        <input type="hidden" name="action" value="enable_share">
+                        <button type="submit" class="btn btn-ghost btn-sm">Aktivér deling</button>
+                    </form>
+                <?php endif; ?>
+            </div>
+
+            <form method="post" class="list-danger-action" onsubmit="return confirm('Slet denne liste permanent? Den fjernes også for andre medlemmer.');">
+                <input type="hidden" name="action" value="delete">
+                <button type="submit" class="btn btn-danger">Slet liste</button>
+            </form>
+        <?php else: ?>
+            <p class="field-hint">Dette er en delt liste. Du kan forlade den, men ikke slette den.</p>
+            <form method="post" class="list-danger-action" onsubmit="return confirm('Forlad denne liste?');">
+                <input type="hidden" name="action" value="leave">
+                <button type="submit" class="btn btn-ghost">Forlad liste</button>
+            </form>
+        <?php endif; ?>
+    </div>
+</dialog>
 
 <script>
-document.querySelectorAll('[data-copy-target]').forEach(function (button) {
-    button.addEventListener('click', function () {
-        var input = document.getElementById(button.getAttribute('data-copy-target'));
-        if (!input) {
-            return;
-        }
-        input.select();
-        input.setSelectionRange(0, input.value.length);
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(input.value).then(function () {
-                button.textContent = 'Kopieret';
-                setTimeout(function () { button.textContent = 'Kopiér'; }, 2000);
-            });
+(function () {
+    var dialog = document.getElementById('list-settings-dialog');
+    if (!dialog) return;
+
+    function openDialog() {
+        dialog.showModal();
+    }
+
+    function closeDialog() {
+        dialog.close();
+    }
+
+    var openBtn = document.getElementById('open-list-settings-dialog');
+    if (openBtn) {
+        openBtn.addEventListener('click', openDialog);
+    }
+
+    dialog.querySelectorAll('[data-dialog-close]').forEach(function (button) {
+        button.addEventListener('click', closeDialog);
+    });
+
+    dialog.addEventListener('click', function (event) {
+        if (event.target === dialog) {
+            closeDialog();
         }
     });
-});
+
+    document.querySelectorAll('[data-copy-target]').forEach(function (button) {
+        button.addEventListener('click', function () {
+            var input = document.getElementById(button.getAttribute('data-copy-target'));
+            if (!input) {
+                return;
+            }
+            input.select();
+            input.setSelectionRange(0, input.value.length);
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(input.value).then(function () {
+                    button.textContent = 'Kopieret';
+                    setTimeout(function () { button.textContent = 'Kopiér'; }, 2000);
+                });
+            }
+        });
+    });
+
+    <?php if ($openSettingsDialog): ?>
+    openDialog();
+    <?php endif; ?>
+})();
 </script>
 
 <?php
