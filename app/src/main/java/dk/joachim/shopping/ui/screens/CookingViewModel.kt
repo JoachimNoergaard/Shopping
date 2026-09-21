@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dk.joachim.shopping.data.CatalogItem
 import dk.joachim.shopping.data.CompletedStep
+import dk.joachim.shopping.data.GroceryList
 import dk.joachim.shopping.data.Ingredient
 import dk.joachim.shopping.data.IngredientSection
 import dk.joachim.shopping.data.InstructionSection
@@ -67,6 +68,10 @@ data class CookingUiState(
     /** Resolved target for “add to grocery list” from last-used id, or first list. */
     val targetGroceryListName: String? = null,
     val canAddIngredientsToGroceryList: Boolean = false,
+    /** All grocery lists, for the picker shown when long-pressing a recipe ingredient. */
+    val groceryLists: List<GroceryList> = emptyList(),
+    /** List preselected in that picker — the last used one, or the first list. */
+    val defaultGroceryListId: String? = null,
     /** When non-null, recipe search list only shows this [Recipe.courseType] (case-insensitive). */
     val recipeCourseTypeFilter: String? = null,
     /** True while the recipe search field on the menu-plans screen has focus. */
@@ -203,6 +208,8 @@ class CookingViewModel : ViewModel() {
             importRecipeInstructions = extra.importRecipeInstructions,
             targetGroceryListName = targetList?.name,
             canAddIngredientsToGroceryList = targetList != null,
+            groceryLists = lists,
+            defaultGroceryListId = targetList?.id,
             recipeCourseTypeFilter = extra.recipeCourseTypeFilter,
             recipeSearchFieldFocused = extra.recipeSearchFieldFocused,
         )
@@ -244,16 +251,31 @@ class CookingViewModel : ViewModel() {
         val lists = repository.lists.value
         val lastId = repository.getLastListId()
         val targetList = lists.firstOrNull { it.id == lastId } ?: lists.firstOrNull() ?: return
-        val qty =
-            listOf(quantity, unit).filter { it.isNotBlank() }.joinToString(" ").ifBlank { "1" }
+        addIngredientToGroceryList(targetList.id, ingredientName, quantity, unit)
+    }
+
+    /**
+     * Adds one ingredient line to the grocery list the user picked, and remembers that list so
+     * the picker defaults to it next time.
+     */
+    fun addIngredientToGroceryList(
+        listId: String,
+        ingredientName: String,
+        quantity: String,
+        unit: String,
+    ) {
         val trimmedName = ingredientName.trim()
         if (trimmedName.isBlank()) return
+        if (repository.lists.value.none { it.id == listId }) return
+        val qty =
+            listOf(quantity, unit).filter { it.isNotBlank() }.joinToString(" ").ifBlank { "1" }
         val categoryId = categoryIdForGroceryAdd(
             trimmedName,
             repository.catalogItems.value,
             _userCategories.value
         )
-        repository.addOrMergeItem(targetList.id, trimmedName, qty, categoryId)
+        repository.addOrMergeItem(listId, trimmedName, qty, categoryId)
+        repository.saveLastListId(listId)
     }
 
     private fun categoryIdForGroceryAdd(

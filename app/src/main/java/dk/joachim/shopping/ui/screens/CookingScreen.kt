@@ -18,6 +18,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +39,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -83,6 +85,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -111,7 +114,10 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.text.LinkAnnotation
@@ -135,6 +141,7 @@ import dk.joachim.shopping.data.InstructionSection
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dk.joachim.shopping.data.CompletedStep
+import dk.joachim.shopping.data.GroceryList
 import dk.joachim.shopping.data.Ingredient
 import dk.joachim.shopping.data.MenuPlan
 import dk.joachim.shopping.data.RecipePhotoStorage
@@ -254,6 +261,14 @@ fun CookingScreen(
                     if (!recipe.isPinned) "Fastgjort til oversigt" else "Fjernet fra oversigt",
                     Toast.LENGTH_SHORT,
                 ).show()
+            },
+            groceryLists = uiState.groceryLists,
+            defaultGroceryListId = uiState.defaultGroceryListId,
+            onAddIngredientToGroceryList = { listId, name, quantity, unit ->
+                viewModel.addIngredientToGroceryList(listId, name, quantity, unit)
+                val listName = uiState.groceryLists.firstOrNull { it.id == listId }?.name
+                    ?: "indkøbslisten"
+                Toast.makeText(context, "$name tilføjet til $listName", Toast.LENGTH_SHORT).show()
             },
             onEdit = viewModel::startEditingFromViewer,
             onOpenLinkedRecipe = viewModel::openLinkedRecipe,
@@ -1144,12 +1159,17 @@ private fun RecipeDetailScreen(
     onAddToPlan: (planId: String) -> Unit = {},
     onCreatePlanAndAdd: (name: String) -> Unit = {},
     onTogglePinned: () -> Unit = {},
+    groceryLists: List<GroceryList> = emptyList(),
+    defaultGroceryListId: String? = null,
+    onAddIngredientToGroceryList: (listId: String, name: String, quantity: String, unit: String) -> Unit =
+        { _, _, _, _ -> },
     onEdit: () -> Unit,
     onOpenLinkedRecipe: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val view = LocalView.current
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     var keepScreenOnActive by remember { mutableStateOf(false) }
 
     // Always clear the flag when leaving the screen
@@ -1174,6 +1194,21 @@ private fun RecipeDetailScreen(
 
     var showPlanPicker by remember { mutableStateOf(false) }
     var showOverflowMenu by remember { mutableStateOf(false) }
+    // Set by long-pressing an ingredient row; opens the grocery-list picker.
+    var pendingGroceryIngredient by remember { mutableStateOf<PendingGroceryIngredient?>(null) }
+
+    pendingGroceryIngredient?.let { pending ->
+        AddIngredientToGroceryListDialog(
+            ingredient = pending,
+            lists = groceryLists,
+            defaultListId = defaultGroceryListId,
+            onAdd = { listId ->
+                onAddIngredientToGroceryList(listId, pending.name, pending.quantity, pending.unit)
+                pendingGroceryIngredient = null
+            },
+            onDismiss = { pendingGroceryIngredient = null },
+        )
+    }
 
     if (showPlanPicker) {
         AddToPlanDialog(
@@ -1520,8 +1555,25 @@ private fun RecipeDetailScreen(
                                     )
                                 }
                                 section.ingredients.forEach { ingredient ->
-                                    Row(modifier = Modifier.padding(vertical = 2.dp)) {
-                                        val scaledQty = scaleQuantity(ingredient.quantity, scaleFactor)
+                                    val scaledQty = scaleQuantity(ingredient.quantity, scaleFactor)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .pointerInput(ingredient, scaledQty) {
+                                                detectTapGestures(
+                                                    onLongPress = {
+                                                        if (ingredient.name.isBlank()) return@detectTapGestures
+                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        pendingGroceryIngredient = PendingGroceryIngredient(
+                                                            name = ingredient.name.capitalizeIngredientFirstLetter(),
+                                                            quantity = scaledQty,
+                                                            unit = ingredient.unit,
+                                                        )
+                                                    },
+                                                )
+                                            }
+                                            .padding(vertical = 2.dp)
+                                    ) {
                                         val qty = listOf(scaledQty, ingredient.unit)
                                             .filter { it.isNotBlank() }
                                             .joinToString(" ")
@@ -2632,6 +2684,88 @@ private fun MenuPlanIngredientsDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("Luk") }
+        },
+    )
+}
+
+/** An ingredient the user long-pressed, with the quantity already scaled to the shown servings. */
+private data class PendingGroceryIngredient(
+    val name: String,
+    val quantity: String,
+    val unit: String,
+)
+
+/** Picks which grocery list a single recipe ingredient goes to; defaults to the last used list. */
+@Suppress("FunctionNaming")
+@Composable
+private fun AddIngredientToGroceryListDialog(
+    ingredient: PendingGroceryIngredient,
+    lists: List<GroceryList>,
+    defaultListId: String?,
+    onAdd: (listId: String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var pickedListId by remember(defaultListId) { mutableStateOf(defaultListId) }
+    // Falls back to the first list if the remembered id is stale or the lists loaded late.
+    val selectedListId = lists.firstOrNull { it.id == pickedListId }?.id ?: lists.firstOrNull()?.id
+    val label = listOf(ingredient.quantity, ingredient.unit, ingredient.name)
+        .filter { it.isNotBlank() }
+        .joinToString(" ")
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Tilføj til indkøbsliste") },
+        text = {
+            Column {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                if (lists.isEmpty()) {
+                    Text(
+                        text = "Ingen indkøbslister — opret en liste først",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                        lists.forEach { list ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .selectable(
+                                        selected = list.id == selectedListId,
+                                        role = Role.RadioButton,
+                                        onClick = { pickedListId = list.id },
+                                    )
+                                    .padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                RadioButton(
+                                    selected = list.id == selectedListId,
+                                    onClick = null,
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = list.name,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { selectedListId?.let(onAdd) },
+                enabled = selectedListId != null,
+            ) { Text("Tilføj") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Annuller") }
         },
     )
 }
