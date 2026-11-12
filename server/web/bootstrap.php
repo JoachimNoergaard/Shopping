@@ -164,6 +164,49 @@ function render_grocery_qty_script(string $postUrl, ?string $shareToken = null):
     (function () {
         var postUrl = <?= json_encode($postUrl, JSON_UNESCAPED_UNICODE) ?>;
         var shareToken = <?= json_encode($shareToken, JSON_UNESCAPED_UNICODE) ?>;
+        var rolloverAt = Date.now() + <?= max(1000, ((new DateTimeImmutable('tomorrow', new DateTimeZone('Europe/Copenhagen')))->getTimestamp() - time()) * 1000) ?>;
+        var hasUnsavedOffer = false;
+        document.querySelectorAll('.add-item-form, .grocery-offer-form').forEach(function (form) {
+            form.addEventListener('input', function () { hasUnsavedOffer = true; });
+            form.addEventListener('change', function () { hasUnsavedOffer = true; });
+        });
+        function refreshOffers() {
+            if (Date.now() >= rolloverAt && !hasUnsavedOffer) {
+                window.location.reload();
+            }
+        }
+        window.setInterval(refreshOffers, 60000);
+        document.addEventListener('visibilitychange', refreshOffers);
+
+        document.querySelectorAll('.grocery-item').forEach(function (row) {
+            var dialog = row.querySelector('.grocery-offer-dialog');
+            var openButton = row.querySelector('[data-offer-open]');
+            if (!dialog || !openButton) return;
+
+            function openOffer() {
+                if (!dialog.open) dialog.showModal();
+            }
+
+            openButton.addEventListener('click', openOffer);
+            row.addEventListener('click', function (event) {
+                if (event.target.closest('button, a, input, select, textarea, form, dialog')) return;
+                openOffer();
+            });
+            dialog.querySelectorAll('[data-offer-close]').forEach(function (button) {
+                button.addEventListener('click', function () { dialog.close(); });
+            });
+            dialog.addEventListener('click', function (event) {
+                if (event.target !== dialog) return;
+                var bounds = dialog.getBoundingClientRect();
+                if (event.clientX < bounds.left || event.clientX > bounds.right
+                    || event.clientY < bounds.top || event.clientY > bounds.bottom) {
+                    dialog.close();
+                }
+            });
+            dialog.addEventListener('close', function () {
+                dialog.querySelector('form').reset();
+            });
+        });
 
         document.querySelectorAll('[data-qty-adjust]').forEach(function (button) {
             button.addEventListener('click', function () {
@@ -220,7 +263,80 @@ function render_grocery_qty_script(string $postUrl, ?string $shareToken = null):
     <?php
 }
 
-function render_grocery_item_row(array $item, ?string $shareToken = null): void
+function render_grocery_offer_fields(array $shops, array $item = [], string $prefix = 'item'): void
+{
+    $isPostedForm = (($item['id'] ?? null) !== null
+        && ($_POST['action'] ?? '') === 'update_item'
+        && ($_POST['item_id'] ?? '') === $item['id'])
+        || ($item === [] && ($_POST['action'] ?? '') === 'add_item');
+    if ($isPostedForm) {
+        $postedIds = is_array($_POST['shops'] ?? null) ? array_filter($_POST['shops'], 'is_string') : [];
+        $item = array_replace($item, [
+            'price' => is_string($_POST['price'] ?? null) ? $_POST['price'] : '',
+            'weekday' => is_string($_POST['weekday'] ?? null) ? $_POST['weekday'] : '',
+            'supermarket' => implode(',', $postedIds),
+        ]);
+    }
+    $selectedIds = grocery_shop_ids($item['supermarket'] ?? null);
+    $shopMap = array_column($shops, null, 'id');
+    ?>
+    <div class="add-item-field">
+        <label for="<?= h($prefix) ?>-price">Pris (kr.)</label>
+        <input type="text" inputmode="decimal" id="<?= h($prefix) ?>-price" name="price"
+               maxlength="100" placeholder="Fx 12,95" value="<?= h($item['price'] ?? '') ?>">
+    </div>
+    <div class="add-item-field">
+        <label for="<?= h($prefix) ?>-weekday">Tilbuddet starter</label>
+        <input type="date" id="<?= h($prefix) ?>-weekday" name="weekday"
+               value="<?= h(grocery_offer_date($item['weekday'] ?? null)?->format('Y-m-d') ?? '') ?>">
+        <p class="field-hint">Fremtidige tilbud vises under Kommende tilbud indtil startdatoen.</p>
+    </div>
+    <fieldset class="grocery-shop-options">
+        <legend>Butikker</legend>
+        <?php foreach ($shops as $shop): ?>
+            <label class="grocery-shop-option">
+                <input type="checkbox" name="shops[]" value="<?= h($shop['id']) ?>"
+                       <?= in_array($shop['id'], $selectedIds, true) ? 'checked' : '' ?>>
+                <span><?= h($shop['name']) ?></span>
+            </label>
+        <?php endforeach; ?>
+        <?php foreach ($selectedIds as $shopId): ?>
+            <?php if (!isset($shopMap[$shopId])): ?>
+                <label class="grocery-shop-option">
+                    <input type="checkbox" name="shops[]" value="<?= h($shopId) ?>" checked>
+                    <span>Ukendt butik</span>
+                </label>
+            <?php endif; ?>
+        <?php endforeach; ?>
+        <?php if ($shops === [] && $selectedIds === []): ?>
+            <p class="field-hint">Opret butikker i appen for at vælge dem her.</p>
+        <?php endif; ?>
+    </fieldset>
+    <?php
+}
+
+function render_grocery_offer_pills(array $item, array $shops): void
+{
+    $shopMap = array_column($shops, null, 'id');
+    echo '<div class="grocery-offer-pills">';
+    foreach (grocery_shop_ids($item['supermarket'] ?? null) as $shopId) {
+        $shop = $shopMap[$shopId] ?? null;
+        // Only hex colors may reach the style attribute.
+        $bg = preg_match('/^#[0-9a-f]{6}$/iD', $shop['backgroundColor'] ?? '') ? $shop['backgroundColor'] : '#e3f2fd';
+        $fg = preg_match('/^#[0-9a-f]{6}$/iD', $shop['foregroundColor'] ?? '') ? $shop['foregroundColor'] : '#102a43';
+        echo '<span class="grocery-offer-pill grocery-shop-pill" style="background:' . h($bg) . ';color:' . h($fg) . '">'
+            . h($shop['name'] ?? 'Ukendt butik') . '</span>';
+    }
+    if (($item['price'] ?? '') !== '' && $item['price'] !== null) {
+        echo '<span class="grocery-offer-pill grocery-price-pill">' . h($item['price']) . ' kr.</span>';
+    }
+    if (($item['weekday'] ?? '') !== '' && $item['weekday'] !== null) {
+        echo '<span class="grocery-offer-pill">Fra ' . h(grocery_offer_date_label($item['weekday'])) . '</span>';
+    }
+    echo '</div>';
+}
+
+function render_grocery_item_row(array $item, ?string $shareToken = null, array $shops = []): void
 {
     $checked = !empty($item['isChecked']);
     $quantity = trim((string) ($item['quantity'] ?? ''));
@@ -238,7 +354,10 @@ function render_grocery_item_row(array $item, ?string $shareToken = null): void
             </button>
         </form>
         <div class="grocery-item-body">
-            <span class="grocery-item-name"><?= h($item['name']) ?></span>
+            <button type="button" class="grocery-item-name grocery-item-open"
+                    data-offer-open aria-haspopup="dialog" aria-controls="offer-dialog-<?= h($item['id']) ?>">
+                <?= h($item['name']) ?>
+            </button>
             <?php if ($checked): ?>
                 <?php if ($displayQuantity !== '1'): ?>
                     <span class="grocery-item-quantity"><?= h($displayQuantity) ?></span>
@@ -264,6 +383,26 @@ function render_grocery_item_row(array $item, ?string $shareToken = null): void
                     >+</button>
                 </div>
             <?php endif; ?>
+            <?php render_grocery_offer_pills($item, $shops); ?>
+            <dialog class="app-dialog grocery-offer-dialog" id="offer-dialog-<?= h($item['id']) ?>"
+                    aria-labelledby="offer-title-<?= h($item['id']) ?>">
+                <form method="post" class="dialog-form grocery-offer-form">
+                    <div class="dialog-header-row">
+                        <h2 id="offer-title-<?= h($item['id']) ?>"><?= h($item['name']) ?></h2>
+                        <button type="button" class="btn btn-ghost btn-sm" data-offer-close aria-label="Luk">×</button>
+                    </div>
+                    <input type="hidden" name="action" value="update_item">
+                    <input type="hidden" name="item_id" value="<?= h($item['id']) ?>">
+                    <?php if ($shareToken !== null): ?>
+                        <input type="hidden" name="token" value="<?= h($shareToken) ?>">
+                    <?php endif; ?>
+                    <?php render_grocery_offer_fields($shops, $item, 'offer-' . $item['id']); ?>
+                    <div class="dialog-actions">
+                        <button type="button" class="btn btn-ghost btn-sm" data-offer-close>Annuller</button>
+                        <button type="submit" class="btn btn-primary btn-sm">Gem</button>
+                    </div>
+                </form>
+            </dialog>
         </div>
         <form method="post" class="grocery-item-delete">
             <?php if ($shareToken !== null): ?>
@@ -271,7 +410,12 @@ function render_grocery_item_row(array $item, ?string $shareToken = null): void
             <?php endif; ?>
             <input type="hidden" name="action" value="delete_item">
             <input type="hidden" name="item_id" value="<?= h($item['id']) ?>">
-            <button type="submit" class="btn btn-ghost btn-sm grocery-delete-btn" aria-label="Slet vare">×</button>
+            <button type="submit" class="btn btn-ghost btn-sm grocery-delete-btn" aria-label="Slet vare">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                    <path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/>
+                </svg>
+            </button>
         </form>
     </li>
     <?php
@@ -279,9 +423,14 @@ function render_grocery_item_row(array $item, ?string $shareToken = null): void
 
 /** @param list<array{title:string,items:list<array>}> $uncheckedGroups */
 /** @param list<array{title:string,items:list<array>}> $checkedGroups */
-function render_grocery_list_sections(array $uncheckedGroups, array $checkedGroups, ?string $shareToken = null): void
-{
-    if ($uncheckedGroups === [] && $checkedGroups === []) {
+function render_grocery_list_sections(
+    array $uncheckedGroups,
+    array $checkedGroups,
+    ?string $shareToken = null,
+    array $shops = [],
+    array $futureGroups = [],
+): void {
+    if ($uncheckedGroups === [] && $checkedGroups === [] && $futureGroups === []) {
         echo '<div class="card empty-state"><p>Listen er tom. Tilføj varer ovenfor.</p></div>';
         return;
     }
@@ -291,30 +440,41 @@ function render_grocery_list_sections(array $uncheckedGroups, array $checkedGrou
         echo '<h2 class="grocery-category-title">' . h($group['title']) . '</h2>';
         echo '<ul class="grocery-items">';
         foreach ($group['items'] as $item) {
-            render_grocery_item_row($item, $shareToken);
+            render_grocery_item_row($item, $shareToken, $shops);
         }
         echo '</ul></section>';
     }
 
-    if ($checkedGroups === []) {
-        return;
+    if ($futureGroups !== []) {
+        $count = array_sum(array_map(static fn ($group) => count($group['items']), $futureGroups));
+        echo '<details class="card grocery-category-section grocery-future-section">';
+        echo '<summary class="grocery-category-title">Kommende tilbud (' . $count . ')</summary>';
+        echo '<ul class="grocery-items">';
+        foreach ($futureGroups as $group) {
+            foreach ($group['items'] as $item) {
+                render_grocery_item_row($item, $shareToken, $shops);
+            }
+        }
+        echo '</ul></details>';
     }
 
-    echo '<section class="card grocery-category-section grocery-checked-section">';
-    echo '<h2 class="grocery-category-title">Afkrydsede</h2>';
-    echo '<ul class="grocery-items">';
-    foreach ($checkedGroups as $group) {
-        foreach ($group['items'] as $item) {
-            render_grocery_item_row($item, $shareToken);
+    if ($checkedGroups !== []) {
+        echo '<section class="card grocery-category-section grocery-checked-section">';
+        echo '<h2 class="grocery-category-title">Afkrydsede</h2><ul class="grocery-items">';
+        foreach ($checkedGroups as $group) {
+            foreach ($group['items'] as $item) {
+                render_grocery_item_row($item, $shareToken, $shops);
+            }
         }
+        echo '</ul></section>';
     }
-    echo '</ul></section>';
 }
 
 function render_add_grocery_item_form(
     array $categories,
     array $catalogItems = [],
     ?string $shareToken = null,
+    array $shops = [],
 ): void {
     $formAction = $shareToken !== null
         ? 'list-share.php?token=' . urlencode($shareToken)
@@ -336,6 +496,7 @@ function render_add_grocery_item_form(
                         required
                         autocomplete="off"
                         placeholder="Tilføj vare…"
+                        value="<?= ($_POST['action'] ?? '') === 'add_item' && is_string($_POST['name'] ?? null) ? h($_POST['name']) : '' ?>"
                     >
                     <?php if ($catalogItems !== []): ?>
                         <ul class="add-item-suggestions" id="item-suggestions" hidden></ul>
@@ -346,21 +507,23 @@ function render_add_grocery_item_form(
             <div class="add-item-details">
                 <div class="add-item-field">
                     <label for="item-quantity">Mængde</label>
-                    <input type="text" id="item-quantity" name="quantity" placeholder="1">
+                    <input type="text" id="item-quantity" name="quantity" placeholder="1"
+                           value="<?= ($_POST['action'] ?? '') === 'add_item' && is_string($_POST['quantity'] ?? null) ? h($_POST['quantity']) : '' ?>">
                 </div>
                 <?php if ($categories !== []): ?>
                     <div class="add-item-field">
                         <label for="item-category">Kategori</label>
                         <select id="item-category" name="category" required>
-                            <option value="" selected disabled>Vælg kategori</option>
+                            <option value="" disabled <?= empty($_POST['category']) ? 'selected' : '' ?>>Vælg kategori</option>
                             <?php foreach ($categories as $cat): ?>
-                                <option value="<?= h($cat['id']) ?>">
+                                <option value="<?= h($cat['id']) ?>" <?= ($_POST['category'] ?? '') === $cat['id'] ? 'selected' : '' ?>>
                                     <?= h($cat['name']) ?>
                                 </option>
                             <?php endforeach; ?>
                         </select>
                     </div>
                 <?php endif; ?>
+                <?php render_grocery_offer_fields($shops); ?>
                 <button type="submit" class="btn btn-primary add-item-submit">Tilføj</button>
             </div>
         </form>
@@ -385,10 +548,8 @@ function render_add_grocery_item_form(
 
         function collapseAddItem() {
             form.classList.add('is-collapsed');
-            if (nameInput) nameInput.value = '';
-            if (quantityInput) quantityInput.value = '';
-            if (categorySelect) categorySelect.value = '';
-            if (nameInput) nameInput.blur();
+            form.reset();
+            if (form.contains(document.activeElement)) document.activeElement.blur();
             hideSuggestions();
         }
 
@@ -486,7 +647,7 @@ function render_add_grocery_item_form(
         }
 
         document.addEventListener('mousedown', function (event) {
-            if (card.contains(event.target)) return;
+            if (card.contains(event.target) || form.contains(document.activeElement)) return;
             if (event.target.closest && event.target.closest('.add-item-suggestions')) return;
             if (!isExpanded()) return;
             collapseAddItem();

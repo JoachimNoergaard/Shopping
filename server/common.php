@@ -3,6 +3,8 @@
  * Shared database setup and helpers for api.php and the recipe web portal.
  */
 
+require_once __DIR__ . '/grocery-offers.php';
+
 if (!defined('DB_HOST')) {
     define('DB_HOST', 'localhost');
     define('DB_NAME', 'joachimd_shopping');
@@ -72,12 +74,18 @@ $db->exec('CREATE TABLE IF NOT EXISTS items (
     checked_at  BIGINT,
     weekday     VARCHAR(10),
     price       VARCHAR(100),
-    supermarket VARCHAR(100),
+    supermarket TEXT,
     comment     TEXT,
     updated_at  BIGINT       NOT NULL,
     PRIMARY KEY (id),
     FOREIGN KEY (list_id) REFERENCES lists(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+
+// Multiple shop IDs share the existing API field. Widen legacy databases once.
+$shopColumn = $db->query("SHOW COLUMNS FROM items LIKE 'supermarket'")->fetch();
+if ($shopColumn && strtolower($shopColumn['Type']) !== 'text') {
+    $db->exec('ALTER TABLE items MODIFY COLUMN supermarket TEXT NULL');
+}
 
 $db->exec('CREATE TABLE IF NOT EXISTS categories (
     id          VARCHAR(36)  NOT NULL,
@@ -499,26 +507,49 @@ function process_grocery_list_item_post(
     string $defaultCategoryId,
     string $redirectUrl,
     ?string $catalogProfileId = null,
+    array $shops = [],
 ): array {
     $action = $_POST['action'] ?? '';
 
+    if ($action === 'update_item') {
+        $itemId = is_string($_POST['item_id'] ?? null) ? $_POST['item_id'] : '';
+        foreach ($list['items'] as $candidate) {
+            if ($candidate['id'] !== $itemId) {
+                continue;
+            }
+            try {
+                $fields = grocery_offer_fields_from_post($_POST, array_column($shops, 'id'), $candidate);
+            } catch (InvalidArgumentException $e) {
+                return ['redirect' => null, 'error' => $e->getMessage(), 'flash' => null];
+            }
+            upsert_list_item($db, $listId, $itemId, array_replace($candidate, $fields));
+            return ['redirect' => $redirectUrl, 'error' => null, 'flash' => 'Tilbuddet er opdateret.'];
+        }
+        return ['redirect' => null, 'error' => 'Varen findes ikke længere.', 'flash' => null];
+    }
+
     if ($action === 'add_item') {
-        $name = trim($_POST['name'] ?? '');
-        $quantity = trim($_POST['quantity'] ?? '');
-        $category = trim($_POST['category'] ?? '');
+        $name = trim(is_string($_POST['name'] ?? null) ? $_POST['name'] : '');
+        $quantity = trim(is_string($_POST['quantity'] ?? null) ? $_POST['quantity'] : '');
+        $category = trim(is_string($_POST['category'] ?? null) ? $_POST['category'] : '');
         if ($name === '') {
             return ['redirect' => null, 'error' => 'Indtast et varenavn.', 'flash' => null];
         }
-        if ($category === '') {
+        if ($category === '' && get_categories_for_profile($db, $catalogProfileId ?? $list['ownerId']) !== []) {
             return ['redirect' => null, 'error' => 'Vælg en kategori.', 'flash' => null];
         }
-        upsert_list_item($db, $listId, newId(), [
+        try {
+            $offerFields = grocery_offer_fields_from_post($_POST, array_column($shops, 'id'));
+        } catch (InvalidArgumentException $e) {
+            return ['redirect' => null, 'error' => $e->getMessage(), 'flash' => null];
+        }
+        upsert_list_item($db, $listId, newId(), array_merge($offerFields, [
             'name'      => $name,
             'quantity'  => $quantity !== '' ? $quantity : '1',
             'category'  => $category,
             'isChecked' => false,
             'checkedAt' => null,
-        ]);
+        ]));
         if ($catalogProfileId !== null && $catalogProfileId !== '') {
             save_catalog_item_for_profile($db, $catalogProfileId, $name, $category);
         }
@@ -615,6 +646,18 @@ function get_categories_for_profile(PDO $db, string $profileId): array
         'id'         => $row['id'],
         'name'       => $row['name'],
         'orderIndex' => (int) $row['order_index'],
+    ], $stmt->fetchAll());
+}
+
+function get_shops_for_profile(PDO $db, string $profileId): array
+{
+    $stmt = $db->prepare('SELECT * FROM shops WHERE profile_id = ? ORDER BY order_index ASC, id ASC');
+    $stmt->execute([$profileId]);
+    return array_map(static fn ($row) => [
+        'id' => $row['id'],
+        'name' => $row['name'],
+        'backgroundColor' => $row['background_color'],
+        'foregroundColor' => $row['foreground_color'],
     ], $stmt->fetchAll());
 }
 

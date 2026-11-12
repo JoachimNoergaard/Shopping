@@ -302,6 +302,7 @@ label {
 input[type="text"],
 input[type="email"],
 input[type="number"],
+input[type="date"],
 input[type="file"],
 textarea,
 select {
@@ -311,6 +312,16 @@ select {
     padding: 0.65rem 0.75rem;
     font: inherit;
     background: #fff;
+}
+
+.add-item-field input[type="text"],
+.add-item-field input[type="date"] {
+    box-sizing: border-box;
+    height: 2.75rem;
+    min-width: 0;
+    line-height: 1.25;
+    color: var(--text);
+    appearance: none;
 }
 
 textarea { min-height: 5rem; resize: vertical; }
@@ -793,6 +804,7 @@ button.btn {
 }
 
 .add-item-form.is-collapsed .add-item-details {
+    visibility: hidden;
     max-height: 0;
     opacity: 0;
     margin-top: 0;
@@ -801,9 +813,10 @@ button.btn {
 
 .add-item-details {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 0.75rem;
-    align-items: end;
+    align-items: start;
+    visibility: hidden;
     max-height: 0;
     opacity: 0;
     overflow: hidden;
@@ -815,19 +828,115 @@ button.btn {
         margin-top 0.22s ease;
 }
 
-.add-item-details:not(:has(select)) {
-    grid-template-columns: minmax(0, 1fr) auto;
+.grocery-shop-options {
+    grid-column: 1 / -1;
+    min-width: 0;
+    margin: 0;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    max-height: 14rem;
+    overflow-y: auto;
+}
+
+.grocery-shop-option {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem;
+    cursor: pointer;
+}
+
+.grocery-shop-option input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+    flex: 0 0 auto;
+}
+
+.grocery-offer-pills {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+}
+
+.grocery-offer-pills:empty {
+    display: none;
+}
+
+.grocery-offer-pill {
+    padding: 0.15rem 0.55rem;
+    border-radius: 1rem;
+    background: #e3f2fd;
+    color: #102a43;
+    font-size: 0.8rem;
+}
+
+.grocery-shop-pill {
+    padding: 0.35rem 0.8rem;
+    border-radius: 999px;
+}
+
+.grocery-shop-pill + .grocery-price-pill {
+    margin-inline-start: 0.5rem;
+}
+
+.grocery-item {
+    cursor: pointer;
+}
+
+.grocery-item-open {
+    appearance: none;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-weight: 600;
+    text-align: left;
+    cursor: pointer;
+}
+
+.grocery-item-open:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 4px;
+    border-radius: 2px;
+}
+
+.grocery-offer-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.grocery-offer-form .dialog-header-row,
+.grocery-offer-form .dialog-actions {
+    grid-column: 1 / -1;
+}
+
+.grocery-offer-form .dialog-header-row h2 {
+    overflow-wrap: anywhere;
+}
+
+.grocery-future-section > summary {
+    cursor: pointer;
+}
+
+.grocery-future-section[open] > summary {
+    margin-bottom: 1rem;
 }
 
 .add-item-form:focus-within .add-item-details,
 .add-item-form:has(input[name="name"]:not(:placeholder-shown)) .add-item-details {
-    max-height: 6rem;
+    visibility: visible;
+    max-height: none;
     opacity: 1;
     margin-top: 0.75rem;
     pointer-events: auto;
 }
 
 .add-item-submit {
+    grid-column: 1 / -1;
     align-self: end;
     white-space: nowrap;
 }
@@ -1017,6 +1126,9 @@ button.btn {
 }
 
 .grocery-delete-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     min-width: 2rem;
     padding: 0.2rem 0.45rem;
     font-size: 1.2rem;
@@ -1163,7 +1275,7 @@ button.btn {
 
     .add-item-form:focus-within .add-item-details,
     .add-item-form:has(input[name="name"]:not(:placeholder-shown)) .add-item-details {
-        max-height: 10rem;
+        max-height: none;
     }
 
     .ingredient-row {

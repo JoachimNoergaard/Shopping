@@ -25,13 +25,14 @@ if ($list === null) {
 $isOwner = list_owned_by_profile($list, $profile);
 $categories = get_categories_for_profile($db, $profile['id']);
 $catalogItems = get_catalog_for_profile($db, $profile['id']);
+$shops = get_shops_for_profile($db, $profile['id']);
 $defaultCategoryId = $categories[0]['id'] ?? '';
 $redirectUrl = 'list.php?id=' . urlencode($id);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
-    if (in_array($action, ['add_item', 'toggle_item', 'delete_item', 'adjust_quantity', 'clear_checked'], true)) {
+    if (in_array($action, ['add_item', 'update_item', 'toggle_item', 'delete_item', 'adjust_quantity', 'clear_checked'], true)) {
         $result = process_grocery_list_item_post(
             $db,
             $id,
@@ -39,6 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $defaultCategoryId,
             $redirectUrl,
             $profile['id'],
+            $shops,
         );
         $itemError = respond_grocery_list_item_result($result, $redirectUrl);
         if ($itemError !== null) {
@@ -93,7 +95,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$uncheckedGroups = group_list_items_by_category($list['items'], $categories, false);
+$activeItems = array_filter($list['items'], static fn ($item) => !grocery_offer_is_future($item));
+$futureItems = array_filter($list['items'], static fn ($item) => empty($item['isChecked']) && grocery_offer_is_future($item));
+$uncheckedGroups = group_list_items_by_category($activeItems, $categories, false);
+$futureGroups = group_list_items_by_category($futureItems, $categories, false);
 $checkedGroups = group_list_items_by_category($list['items'], $categories, true);
 $checkedCount = count(array_filter($list['items'], static fn ($item) => !empty($item['isChecked'])));
 $success = flash_get('success');
@@ -126,9 +131,9 @@ render_header($list['name'], $profile);
     <div class="alert alert-error"><?= h($error) ?></div>
 <?php endif; ?>
 
-<?php render_add_grocery_item_form($categories, $catalogItems); ?>
+<?php render_add_grocery_item_form($categories, $catalogItems, null, $shops); ?>
 
-<?php render_grocery_list_sections($uncheckedGroups, $checkedGroups); ?>
+<?php render_grocery_list_sections($uncheckedGroups, $checkedGroups, null, $shops, $futureGroups); ?>
 
 <dialog class="app-dialog list-settings-dialog" id="list-settings-dialog" aria-labelledby="list-settings-dialog-title">
     <div class="dialog-form list-settings">

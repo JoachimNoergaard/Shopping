@@ -26,10 +26,11 @@ if ($list === null) {
 $listId = $list['id'];
 $categories = get_categories_for_profile($db, $list['ownerId']);
 $catalogItems = get_catalog_for_profile($db, $list['ownerId']);
+$shops = get_shops_for_profile($db, $list['ownerId']);
 $redirectUrl = 'list-share.php?token=' . urlencode($token);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $result = process_grocery_list_item_post($db, $listId, $list, '', $redirectUrl);
+    $result = process_grocery_list_item_post($db, $listId, $list, '', $redirectUrl, null, $shops);
     $itemError = respond_grocery_list_item_result($result, $redirectUrl);
     if ($itemError !== null) {
         $error = $itemError;
@@ -45,7 +46,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-$uncheckedGroups = group_list_items_by_category($list['items'], $categories, false);
+$activeItems = array_filter($list['items'], static fn ($item) => !grocery_offer_is_future($item));
+$futureItems = array_filter($list['items'], static fn ($item) => empty($item['isChecked']) && grocery_offer_is_future($item));
+$uncheckedGroups = group_list_items_by_category($activeItems, $categories, false);
+$futureGroups = group_list_items_by_category($futureItems, $categories, false);
 $checkedGroups = group_list_items_by_category($list['items'], $categories, true);
 $checkedCount = count(array_filter($list['items'], static fn ($item) => !empty($item['isChecked'])));
 $success = flash_get('success');
@@ -74,9 +78,9 @@ render_header($list['name']);
     <div class="alert alert-error"><?= h($error) ?></div>
 <?php endif; ?>
 
-<?php render_add_grocery_item_form($categories, $catalogItems, $token); ?>
+<?php render_add_grocery_item_form($categories, $catalogItems, $token, $shops); ?>
 
-<?php render_grocery_list_sections($uncheckedGroups, $checkedGroups, $token); ?>
+<?php render_grocery_list_sections($uncheckedGroups, $checkedGroups, $token, $shops, $futureGroups); ?>
 
 <?php
 render_grocery_qty_script($redirectUrl, $token);

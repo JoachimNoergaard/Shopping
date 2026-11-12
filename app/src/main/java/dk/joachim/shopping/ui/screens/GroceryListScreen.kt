@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -34,6 +35,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -120,6 +123,8 @@ import dk.joachim.shopping.data.WEEKDAYS
 import dk.joachim.shopping.data.dateToWeekdayAbbr
 import dk.joachim.shopping.data.isFutureWeekday
 import dk.joachim.shopping.data.weekdayNameToNextDate
+import dk.joachim.shopping.data.toShopIds
+import dk.joachim.shopping.data.toShopSelection
 import kotlinx.coroutines.flow.first
 
 /** Item is in the Andet bucket: real “Andet” category or unknown category id (shown as Andet). */
@@ -706,7 +711,7 @@ private fun GroceryItemCard(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.horizontalScroll(rememberScrollState())
                 ) {
-                    item.supermarket?.let { shopId ->
+                    item.supermarket.toShopIds().forEach { shopId ->
                         val shop = shops.firstOrNull { it.id == shopId }
                         val bgColor = shop?.backgroundColor?.toColor()
                         val fgColor = (shop?.foregroundColor?.toColor() ?: Color.White)
@@ -843,6 +848,98 @@ private fun GroceryItemCard(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+private fun ShopSelectorField(
+    value: String?,
+    shops: List<Shop>,
+    onValueChange: (String?) -> Unit,
+) {
+    var showSelector by rememberSaveable { mutableStateOf(false) }
+    var pendingIds by rememberSaveable { mutableStateOf(value.toShopIds()) }
+    val selectedIds = value.toShopIds()
+
+    ExposedDropdownMenuBox(
+        expanded = showSelector,
+        onExpandedChange = {
+            pendingIds = selectedIds
+            showSelector = it
+        },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        OutlinedTextField(
+            value = selectedIds.joinToString(", ") { id ->
+                shops.firstOrNull { it.id == id }?.name ?: id
+            },
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(stringResource(R.string.shops)) },
+            leadingIcon = { Icon(Icons.Default.Store, contentDescription = null) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showSelector) },
+            modifier = Modifier.fillMaxWidth().menuAnchor(),
+            textStyle = MaterialTheme.typography.bodyMedium,
+        )
+    }
+
+    if (showSelector) {
+        AlertDialog(
+            onDismissRequest = { showSelector = false },
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(stringResource(R.string.shops), modifier = Modifier.weight(1f))
+                    TextButton(onClick = {
+                        onValueChange(pendingIds.toShopSelection())
+                        showSelector = false
+                    }) {
+                        Text(stringResource(R.string.done))
+                    }
+                }
+            },
+            text = {
+                Column {
+                    TextButton(
+                        onClick = { pendingIds = emptyList() },
+                        enabled = pendingIds.isNotEmpty(),
+                    ) {
+                        Text(stringResource(R.string.clear_shops))
+                    }
+                    LazyColumn(modifier = Modifier.heightIn(max = 360.dp)) {
+                        itemsIndexed(shops, key = { _, shop -> shop.id }) { _, shop ->
+                            val selected = shop.id in pendingIds
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .toggleable(
+                                        value = selected,
+                                        role = Role.Checkbox,
+                                        onValueChange = { checked ->
+                                            pendingIds = if (checked) pendingIds + shop.id
+                                            else pendingIds - shop.id
+                                        },
+                                    )
+                                    .padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Checkbox(checked = selected, onCheckedChange = null)
+                                Box(
+                                    modifier = Modifier.size(12.dp).clip(CircleShape)
+                                        .background(shop.backgroundColor.toColor())
+                                )
+                                Text(shop.name, modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun ItemDetailsDialog(
     item: GroceryItem,
     userCategories: List<UserCategory>,
@@ -863,7 +960,6 @@ private fun ItemDetailsDialog(
     var commentText by remember { mutableStateOf(item.comment ?: "") }
     var pendingWeekday by remember { mutableStateOf(item.weekday) }
     var pendingSupermarket by remember { mutableStateOf(item.supermarket) }
-    var supermarketDropdownExpanded by remember { mutableStateOf(false) }
     var categoryDropdownExpanded by remember { mutableStateOf(false) }
     var pendingCategoryId by remember(item.id, item.category) { mutableStateOf(item.category) }
 
@@ -1049,82 +1145,11 @@ private fun ItemDetailsDialog(
                 )
 
                 // ── Supermarket ───────────────────────────────────────────
-                ExposedDropdownMenuBox(
-                    expanded = supermarketDropdownExpanded,
-                    onExpandedChange = { supermarketDropdownExpanded = it },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    val selectedShop = shops.firstOrNull { it.id == pendingSupermarket }
-                    OutlinedTextField(
-                        value = selectedShop?.name ?: (pendingSupermarket ?: ""),
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Butik") },
-                        leadingIcon = {
-                            Icon(
-                                Icons.Default.Store,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        },
-                        trailingIcon = {
-                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = supermarketDropdownExpanded)
-                        },
-                        singleLine = true,
-                        textStyle = MaterialTheme.typography.bodyMedium,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor()
-                    )
-                    ExposedDropdownMenu(
-                        expanded = supermarketDropdownExpanded,
-                        onDismissRequest = { supermarketDropdownExpanded = false }
-                    ) {
-                        if (pendingSupermarket != null) {
-                            DropdownMenuItem(
-                                text = { Text("— Ryd", color = MaterialTheme.colorScheme.error) },
-                                onClick = {
-                                    pendingSupermarket = null
-                                    supermarketDropdownExpanded = false
-                                }
-                            )
-                        }
-                        shops.forEach { shop ->
-                            DropdownMenuItem(
-                                text = {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(12.dp)
-                                                .clip(androidx.compose.foundation.shape.CircleShape)
-                                                .background(shop.backgroundColor.toColor())
-                                        )
-                                        Text(shop.name)
-                                    }
-                                },
-                                onClick = {
-                                    pendingSupermarket = shop.id
-                                    supermarketDropdownExpanded = false
-                                },
-                                trailingIcon = if (pendingSupermarket == shop.id) ({
-                                    Icon(
-                                        Icons.Default.Store,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }) else null
-                            )
-                        }
-                    }
-                }
+                ShopSelectorField(
+                    value = pendingSupermarket,
+                    shops = shops,
+                    onValueChange = { pendingSupermarket = it }
+                )
 
                 // ── Price ─────────────────────────────────────────────────
                 OutlinedTextField(
@@ -1317,7 +1342,6 @@ private fun AddGroceryItemDialog(
 ) {
     var categoryExpanded by remember { mutableStateOf(false) }
     var suggestionsExpanded by remember { mutableStateOf(false) }
-    var supermarketDropdownExpanded by remember { mutableStateOf(false) }
     var showCloseInsteadOfAdd by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
@@ -1552,82 +1576,11 @@ private fun AddGroceryItemDialog(
                 }
 
                 // ── Shop ──────────────────────────────────────────────────
-                ExposedDropdownMenuBox(
-                    expanded = supermarketDropdownExpanded,
-                    onExpandedChange = { supermarketDropdownExpanded = it },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    val selectedShop = shops.firstOrNull { it.id == supermarket }
-                    OutlinedTextField(
-                        value = selectedShop?.name ?: (supermarket ?: ""),
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("Butik") },
-                        leadingIcon = {
-                            Icon(
-                                Icons.Default.Store,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        },
-                        trailingIcon = {
-                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = supermarketDropdownExpanded)
-                        },
-                        singleLine = true,
-                        textStyle = MaterialTheme.typography.bodyMedium,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .menuAnchor()
-                    )
-                    ExposedDropdownMenu(
-                        expanded = supermarketDropdownExpanded,
-                        onDismissRequest = { supermarketDropdownExpanded = false }
-                    ) {
-                        if (supermarket != null) {
-                            DropdownMenuItem(
-                                text = { Text("— Ryd", color = MaterialTheme.colorScheme.error) },
-                                onClick = {
-                                    onSupermarketChange(null)
-                                    supermarketDropdownExpanded = false
-                                }
-                            )
-                        }
-                        shops.forEach { shop ->
-                            DropdownMenuItem(
-                                text = {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(12.dp)
-                                                .clip(CircleShape)
-                                                .background(shop.backgroundColor.toColor())
-                                        )
-                                        Text(shop.name)
-                                    }
-                                },
-                                onClick = {
-                                    onSupermarketChange(shop.id)
-                                    supermarketDropdownExpanded = false
-                                },
-                                trailingIcon = if (supermarket == shop.id) ({
-                                    Icon(
-                                        Icons.Default.Store,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }) else null
-                            )
-                        }
-                    }
-                }
+                ShopSelectorField(
+                    value = supermarket,
+                    shops = shops,
+                    onValueChange = onSupermarketChange
+                )
 
                 // ── Price ───────────────────────────────────────────────────
                 OutlinedTextField(

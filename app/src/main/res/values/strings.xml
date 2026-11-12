@@ -12,6 +12,8 @@
     <string name="categories">Kategorier</string>
     <string name="goods">Varer</string>
     <string name="shops">Butikker</string>
+    <string name="done">Færdig</string>
+    <string name="clear_shops">Ryd valg</string>
     <string name="delete_list">Slet liste?</string>
     <string name="leave_list">Forlad liste?</string>
     <string name="timer_notification_channel_name">Køkkentimere</string>
